@@ -1,14 +1,17 @@
-#include "stream.h"
+#include "parser.h"
 #include <iostream>
 
 
 namespace xml {
 
-Stream::Stream(const std::string& data) {
+Parser::Parser(const std::string& data) {
     this->data = &data;
 }
 
-Char Stream::get() {
+Char Parser::get() {
+    if (this->eof()) {
+        throw;
+    }
     char current_char = this->data->at(pos);
     if ((current_char & 0b10000000) == 0) {
         // Just ASCII
@@ -42,15 +45,57 @@ Char Stream::get() {
     return char_value;
 }
 
-void Stream::operator++() {
+void Parser::operator++() {
     if (!this->increment) {
         this->get();
     }
     this->pos += this->increment;
 }
 
-bool Stream::eof() {
+bool Parser::eof() {
     return this->pos == this->data->size();
+}
+
+String Parser::parse_name(const String& until) {
+    String name;
+    while (true) {
+        char c = this->get();
+        if (std::find(until.cbegin(), until.cend(), c) != until.cend()) {
+            break;
+        }
+        if (name.empty() && !valid_name_start_character(c)) {
+            throw;
+        }
+        if (!name.empty() && !valid_name_character(c)) {
+            throw;
+        }
+        name.push_back(c);
+        operator++();
+    }
+    if (!valid_name(name)) {
+        throw;
+    }
+    return name;
+}
+
+#include <iostream>
+Tag Parser::parse_tag() {
+    // Increment the '<'
+    operator++();
+    Tag tag;
+    if (this->get() == SOLIDUS) {
+        // End tag.
+        operator++();
+        tag.name = this->parse_name(END_TAG_NAME_TERMINATORS);
+    } else {
+        // Start/empty tag.
+        tag.name = this->parse_name(START_EMPTY_TAG_NAME_TERMINATORS);
+    }
+    std::cout << tag.name.size() << '\n';
+}
+
+void Parser::parse_element() {
+    Tag tag = this->parse_tag();
 }
 
 }
