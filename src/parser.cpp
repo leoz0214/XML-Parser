@@ -59,7 +59,7 @@ bool Parser::eof() {
 String Parser::parse_name(const String& until) {
     String name;
     while (true) {
-        char c = this->get();
+        Char c = this->get();
         if (std::find(until.cbegin(), until.cend(), c) != until.cend()) {
             break;
         }
@@ -78,7 +78,31 @@ String Parser::parse_name(const String& until) {
     return name;
 }
 
-#include <iostream>
+std::pair<String, String> Parser::parse_attribute() {
+    String name = this->parse_name({EQUAL});
+    // Increment the '='
+    operator++();
+    // Ensure opening quote (double or single accepted).
+    Char quote = this->get();
+    if (quote != SINGLE_QUOTE && quote != DOUBLE_QUOTE) {
+        throw;
+    }
+    operator++();
+    String value;
+    while (true) {
+        Char c = this->get();
+        operator++();
+        if (c == quote) {
+            break;
+        }
+        if (!valid_attribute_value_character(c)) {
+            throw;
+        }
+        value.push_back(c);
+    }
+    return {name, value};
+}
+
 Tag Parser::parse_tag() {
     // Increment the '<'
     operator++();
@@ -87,15 +111,116 @@ Tag Parser::parse_tag() {
         // End tag.
         operator++();
         tag.name = this->parse_name(END_TAG_NAME_TERMINATORS);
+        tag.type = TagType::end;
+        while (true) {
+            Char c = this->get();
+            operator++();
+            if (c == TAG_CLOSE) {
+                break;
+            } if (!is_whitespace(c)) {
+                throw;
+            }
+        }
     } else {
         // Start/empty tag.
         tag.name = this->parse_name(START_EMPTY_TAG_NAME_TERMINATORS);
+        while (true) {
+            Char c = this->get();
+            if (c == TAG_CLOSE) {
+                operator++();
+                tag.type == TagType::start;
+                break;
+            }
+            if (c == SOLIDUS) {
+                // Empty tag: must end in /> strictly.
+                tag.type = TagType::empty;
+                operator++();
+                c = this->get();
+                operator++();
+                if (c != TAG_CLOSE) {
+                    throw;
+                }
+                break;
+            }
+            if (is_whitespace(c)) {
+                operator++();
+                continue;
+            }
+            // Not end or whitespace, so must be an attribute.
+            std::pair<String, String> attribute = this->parse_attribute();
+            if (tag.attributes.count(attribute.first)) {
+                // Duplicate attribute names in same element prohibited.
+                throw;
+            }
+            tag.attributes.insert(attribute);
+        }
     }
-    std::cout << tag.name.size() << '\n';
+    return tag;
 }
 
-void Parser::parse_element() {
+Element Parser::parse_element(bool allow_end) {
     Tag tag = this->parse_tag();
+    Element element;
+    element.tag = tag;
+    switch (tag.type) {
+        case TagType::start:
+            break;
+        case TagType::end:
+            if (allow_end) {
+                // Only as the end tag of a parent element.
+                return element;
+            }
+            // Cannot have end tag at this time.
+            throw;
+        case TagType::empty:
+            return element;
+    }
+    // Process normal element after start tag seen.
+    String char_data;
+    while (true) {
+        Char c = this->get();
+        switch (c) {
+            case AMPERSAND:
+                throw;
+            case LEFT_ANGLE_BRACKET: {
+                // Flush current character data to overall text.
+                element.text.reserve(element.text.size() + char_data.size());
+                element.text.insert(element.text.end(), char_data.begin(), char_data.end());
+                char_data.clear();
+                Element child = this->parse_element(true);
+                if (child.tag.type == TagType::end) {
+                    // If closing tag same name, then element successfully closed.
+                    if (child.tag.name != tag.name) {
+                        throw;
+                    }
+                    goto done;
+                }
+                element.children.push_back(child);
+                break;
+            }
+            case RIGHT_ANGLE_BRACKET:
+                // Check ']]>' not formed (strange standard requirement).
+                if (
+                    char_data.size() >= 2
+                    && *(char_data.end() - 1) == RIGHT_SQUARE_BRACKET
+                    && *(char_data.end() - 2) == RIGHT_SQUARE_BRACKET
+                ) {
+                    throw;
+                }
+                char_data.push_back(c);
+                operator++();
+                break;
+            default:
+                // Any other character continues on the character data if valid.
+                if (!valid_character(c)) {
+                    throw;
+                }
+                operator++();
+                char_data.push_back(c);
+        }
+    }
+    done:;
+    return element;
 }
 
 }
