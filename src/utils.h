@@ -4,6 +4,7 @@
 #include <initializer_list>
 #include <map>
 #include <set>
+#include <string>
 #include <utility>
 #include <vector>
 
@@ -11,11 +12,19 @@
 namespace xml {
 
 typedef int Char;
-typedef std::vector<Char> String;
+class String : public std::vector<Char> {
+    public:
+        using std::vector<Char>::vector;
+        String(const char*);
+};
+// Parses a UTF-8 character
+// from a given start byte, at a given offset, out of a total string size.
+Char parse_utf8(const char*, std::size_t, std::size_t, std::size_t&);
 
 // Character constants.
 constexpr char LEFT_ANGLE_BRACKET = '<';
 constexpr char RIGHT_ANGLE_BRACKET = '>';
+constexpr char LEFT_SQUARE_BRACKET = '[';
 constexpr char RIGHT_SQUARE_BRACKET = ']';
 constexpr char TAG_OPEN = LEFT_ANGLE_BRACKET;
 constexpr char TAG_CLOSE = RIGHT_ANGLE_BRACKET;
@@ -24,6 +33,9 @@ constexpr char EQUAL = '=';
 constexpr char SINGLE_QUOTE = '\'';
 constexpr char DOUBLE_QUOTE = '"';
 constexpr char AMPERSAND = '&';
+constexpr char EXCLAMATION_MARK = '!';
+constexpr char QUESTION_MARK = '?';
+constexpr char HYPHEN = '-';
 
 
 // Whitespace characters as per standard.
@@ -87,11 +99,25 @@ struct Tag {
     Attributes attributes;
 };
 
+// Processing instruction class.
+struct ProcessingInstruction {
+    String target;
+    String instruction;
+};
+// Characters which may signal end of processing instruction target name.
+static String PROCESSING_INSTRUCTION_TARGET_NAME_TERMINATORS = []() {
+    String valid_chars(WHITESPACE.begin(), WHITESPACE.end());
+    valid_chars.push_back(QUESTION_MARK);
+    return valid_chars;
+}();
+bool valid_processing_instruction_target(const String&);
+
 // Element class - including child elements, text etc.
 struct Element {
     String text;
     Tag tag;
     std::vector<Element> children;
+    std::vector<ProcessingInstruction> processing_instructions;
 };
 
 }

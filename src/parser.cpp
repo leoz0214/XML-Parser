@@ -1,5 +1,4 @@
 #include "parser.h"
-#include <iostream>
 
 
 namespace xml {
@@ -12,37 +11,16 @@ Char Parser::get() {
     if (this->eof()) {
         throw;
     }
-    char current_char = this->data->at(pos);
-    if ((current_char & 0b10000000) == 0) {
-        // Just ASCII
-        this->increment = 1;
-        return current_char;
-    }
-    int sig_1s = 1;
-    char mask = 0b01000000;
-    // Determine if 2-bytes, 3-bytes or 4-bytes based on number of leading 1s.
-    while (current_char & mask) {
-        sig_1s++;
-        mask >>= 1;
-    }
-    // Validate indeed 2-4 bytes, and not invalid Unicode byte.
-    if (sig_1s < 2 || sig_1s > 4) {
-        throw;
-    }
-    // First byte has (8-n-1) bytes of interest where n is number of leading 1s
-    Char char_value = current_char & (0b11111111 >> sig_1s);
-    // Each subsequent byte has 10xxxxxx = 6 bytes of interest.
-    for (int offset = 1; offset < sig_1s; ++offset) {
-        char byte = this->data->at(pos + offset);
-        // Ensure byte starts with 10......
-        if ((byte & 0b10000000) == 0 || (byte & 0b01000000) == 1)  {
-            throw;
-        }
-        char_value <<= 6;
-        char_value += byte & 0b00111111;
-    }
-    this->increment = sig_1s;
-    return char_value;
+    return parse_utf8(&this->data->at(pos), pos, this->data->size(), this->increment);
+}
+
+Char Parser::peek() {
+    std::size_t current_increment = this->increment;
+    operator++();
+    Char next_char = this->get();
+    this->pos -= current_increment;
+    this->increment = current_increment;
+    return next_char;
 }
 
 void Parser::operator++() {
@@ -56,7 +34,7 @@ bool Parser::eof() {
     return this->pos == this->data->size();
 }
 
-String Parser::parse_name(const String& until) {
+String Parser::parse_name(const String& until, bool validate) {
     String name;
     while (true) {
         Char c = this->get();
@@ -72,7 +50,7 @@ String Parser::parse_name(const String& until) {
         name.push_back(c);
         operator++();
     }
-    if (!valid_name(name)) {
+    if (validate && !valid_name(name)) {
         throw;
     }
     return name;
@@ -128,7 +106,7 @@ Tag Parser::parse_tag() {
             Char c = this->get();
             if (c == TAG_CLOSE) {
                 operator++();
-                tag.type == TagType::start;
+                tag.type = TagType::start;
                 break;
             }
             if (c == SOLIDUS) {
@@ -156,6 +134,82 @@ Tag Parser::parse_tag() {
         }
     }
     return tag;
+}
+
+void Parser::parse_comment() {
+    // This implementation will for now ignore comments.
+    Char prev_char = -1;
+    while (true) {
+        Char c = this->get();
+        operator++();
+        if (c == HYPHEN && prev_char == HYPHEN) {
+            // -- found, needs to be closing part of comment otherwise invalid.
+            if (this->get() == RIGHT_ANGLE_BRACKET) {
+                operator++();
+                return;
+            }
+            throw;
+        }
+        if (!valid_character(c)) {
+            throw;
+        }
+        prev_char = c;
+    }
+}
+
+String Parser::parse_cdata() {
+    String cdata;
+    Char prev_prev_char = -1;
+    Char prev_char = -1;
+    while (true) {
+        Char c = this->get();
+        operator++();
+        // Note, CDATA section must end in ]]>
+        if (c == RIGHT_ANGLE_BRACKET && prev_char == RIGHT_SQUARE_BRACKET
+                && prev_prev_char == RIGHT_SQUARE_BRACKET
+        ) {
+            // Need to remove ending ]]
+            cdata.pop_back();
+            cdata.pop_back();
+            break;
+        }
+        if (!valid_character(c)) {
+            throw;
+        }
+        cdata.push_back(c);
+        prev_prev_char = prev_char;
+        prev_char = c;
+    }
+    return cdata;
+}
+
+ProcessingInstruction Parser::parse_processing_instruction() {
+    ProcessingInstruction pi;
+    pi.target = parse_name(PROCESSING_INSTRUCTION_TARGET_NAME_TERMINATORS, false);
+    if (!valid_processing_instruction_target(pi.target)) {
+        throw;
+    }
+    if (this->get() != QUESTION_MARK) {
+        // Increment whitespace.
+        operator++();
+    }
+    Char prev_char = -1;
+    while (true) {
+        Char c = this->get();
+        operator++();
+        // Closed with ?>
+        if (c == RIGHT_ANGLE_BRACKET && prev_char == QUESTION_MARK) {
+            // Need to remove ending ?
+            pi.instruction.pop_back();
+            break;
+        }
+        if (!valid_character(c)) {
+            throw;
+        }
+        pi.instruction.push_back(c);
+        prev_char = c;
+    }
+    return pi;
 }
 
 Element Parser::parse_element(bool allow_end) {
@@ -187,15 +241,59 @@ Element Parser::parse_element(bool allow_end) {
                 element.text.reserve(element.text.size() + char_data.size());
                 element.text.insert(element.text.end(), char_data.begin(), char_data.end());
                 char_data.clear();
-                Element child = this->parse_element(true);
-                if (child.tag.type == TagType::end) {
-                    // If closing tag same name, then element successfully closed.
-                    if (child.tag.name != tag.name) {
-                        throw;
-                    }
-                    goto done;
+                switch (this->peek()) {
+                    case EXCLAMATION_MARK:
+                        // Comment or CDATA section.
+                        operator++();
+                        operator++();
+                        switch (this->get()) {
+                            case HYPHEN:
+                                // Further narrowed to comment.
+                                operator++();
+                                if (this->get() != HYPHEN) {
+                                    // Not starting with <!--
+                                    throw;
+                                }
+                                operator++();
+                                this->parse_comment();
+                                break;
+                            case LEFT_SQUARE_BRACKET: {
+                                // Further narrowed to CDATA.
+                                operator++();
+                                String required_chars("CDATA[");
+                                for (Char required : required_chars) {
+                                    if (this->get() != required) {
+                                        throw;
+                                    }
+                                    operator++();
+                                }
+                                String cdata = this->parse_cdata();
+                                element.text.reserve(element.text.size() + cdata.size());
+                                element.text.insert(element.text.end(), cdata.begin(), cdata.end());
+                                break;
+                            }
+                            default:
+                                throw;
+                        }
+                        break;
+                    case QUESTION_MARK:
+                        // Processing instruction.
+                        operator++();
+                        operator++();
+                        element.processing_instructions.push_back(this->parse_processing_instruction());
+                        break;
+                    default:
+                        // Must be child element or erroneous.
+                        Element child = this->parse_element(true);
+                        if (child.tag.type == TagType::end) {
+                            // If closing tag same name, then element successfully closed.
+                            if (child.tag.name != tag.name) {
+                                throw;
+                            }
+                            goto done;
+                        }
+                        element.children.push_back(child);
                 }
-                element.children.push_back(child);
                 break;
             }
             case RIGHT_ANGLE_BRACKET:

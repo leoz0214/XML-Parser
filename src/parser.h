@@ -1,5 +1,4 @@
-// Wraps input data into an abstracted stream, returning the current
-// Unicode character as an integer value each time it is requested.
+// Main parsing logic goes here.
 #pragma once
 #include <string>
 #include <utility>
@@ -13,12 +12,16 @@ class Parser {
     const std::string* data;
     std::size_t pos = 0;
     std::size_t increment = 0;
-    String parse_name(const String&);
+    String parse_name(const String&, bool = true);
     std::pair<String, String> parse_attribute();
     Tag parse_tag();
+    void parse_comment();
+    String parse_cdata();
+    ProcessingInstruction parse_processing_instruction();
     public:
         Parser(const std::string&);
         Char get();
+        Char peek();
         void operator++();
         bool eof();
         Element parse_element(bool = false);
