@@ -3,13 +3,9 @@
 
 namespace xml {
 
-void parse(Parser& stream) {
-    // TODO
-}
-
-void parse(const std::string& string) {
+Document parse(const std::string& string) {
     Parser parser(string);
-    return parse(parser);
+    return parser.parse_document();
 }
 
 }

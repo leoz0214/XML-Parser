@@ -17,14 +17,16 @@ class Parser {
     Tag parse_tag();
     void parse_comment();
     String parse_cdata();
-    ProcessingInstruction parse_processing_instruction();
+    ProcessingInstruction parse_processing_instruction(bool = false);
+    void parse_xml_declaration(Document&);
+    Char get();
+    Char peek();
+    void operator++();
+    bool eof();
     public:
         Parser(const std::string&);
-        Char get();
-        Char peek();
-        void operator++();
-        bool eof();
         Element parse_element(bool = false);
+        Document parse_document();
 };
 
 }

@@ -1,9 +1,8 @@
-// Tests the 'parser.cpp' module.
+// Tests the functionality of simple element parsing.
 #include <cassert>
 #include <functional>
 #include <string>
 #include "../src/parser.h"
-#include "../src/utils.h"
 
 
 using namespace xml;
@@ -32,9 +31,9 @@ int main() {
         assert((element.tag.attributes.at("at1") == String{'"'}));
         assert((element.tag.attributes.at("at2") == String("ABC")));
     });
-    test_element(R"(<root level="2">
-                    <item price="2.25">Ruler</item>
-               <item price="10.22"      >Mouse</item   >
+    test_element(R"(<root level    =     "2">
+                    <item price ="2.25">Ruler</item>
+               <item price= "10.22"      >Mouse</item   >
             <item    price="244.55">SmartWatch4000</item>
         </root>
     )", [](const Element& element) {
@@ -60,5 +59,17 @@ int main() {
         assert((element.processing_instructions[0].instruction == String("a='123?'")));
         assert((element.processing_instructions[1].target == String("tgt")));
         assert((element.processing_instructions[1].instruction.empty()));
+    });
+    test_element(R"(<t1>
+        <!-- This is a test - with lots of stuff together! -->
+        <t2 id="123"><!----><![CDATA[1 & 1 = 1]]>!</t2>
+                <?ins anything?>
+            </t1>
+    )", [](const Element& element) {
+        Element child = element.children[0];
+        assert((child.tag.name == String("t2")));
+        assert((child.tag.attributes.at("id") == String("123")));
+        assert((child.text == String("1 & 1 = 1!")));
+        assert((element.processing_instructions[0].target == String("ins")));
     });
 }

@@ -96,4 +96,22 @@ bool valid_processing_instruction_target(const String& target) {
     return !target.empty() && (target.size() != 3 || valid_name(target));
 }
 
+bool valid_version(const String& version) {
+    // Must begin with 1. and subsequent characters are digits.
+    return version.size() > 2 && version[0] == '1' && version[1] == '.'
+        && std::all_of(version.begin() + 2, version.end(), [](Char c) {
+            return std::isdigit(c);
+        });
+}
+
+bool valid_encoding(const String& encoding) {
+    return std::find(
+        SUPPORTED_ENCODINGS.cbegin(), SUPPORTED_ENCODINGS.cend(), encoding
+    ) != SUPPORTED_ENCODINGS.cend();
+}
+
+bool get_standalone_value(const String& string) {
+    return STANDALONE_VALUES.at(string);
+}
+
 }

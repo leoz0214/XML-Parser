@@ -57,9 +57,17 @@ String Parser::parse_name(const String& until, bool validate) {
 }
 
 std::pair<String, String> Parser::parse_attribute() {
-    String name = this->parse_name({EQUAL});
+    String name = this->parse_name(ATTRIBUTE_NAME_TERMINATORS);
+    // Ignore whitespace until '=' is reached.
+    while (this->get() != EQUAL) {
+        operator++();
+    }
     // Increment the '='
     operator++();
+    // Ignore whitespace until something not whitespace is reached.
+    while (is_whitespace(this->get())) {
+        operator++();
+    }
     // Ensure opening quote (double or single accepted).
     Char quote = this->get();
     if (quote != SINGLE_QUOTE && quote != DOUBLE_QUOTE) {
@@ -183,10 +191,16 @@ String Parser::parse_cdata() {
     return cdata;
 }
 
-ProcessingInstruction Parser::parse_processing_instruction() {
+ProcessingInstruction Parser::parse_processing_instruction(bool detect_xml_declaration) {
     ProcessingInstruction pi;
     pi.target = parse_name(PROCESSING_INSTRUCTION_TARGET_NAME_TERMINATORS, false);
     if (!valid_processing_instruction_target(pi.target)) {
+        // Special case - name is exactly 'xml' and xml declaration currently being searched for.
+        // In that case, processing instruction returned and further specialist processing
+        // will take place for handling the XML declaration in particular.
+        if (detect_xml_declaration && pi.target == String("xml")) {
+            return pi;
+        }
         throw;
     }
     if (this->get() != QUESTION_MARK) {
@@ -319,6 +333,150 @@ Element Parser::parse_element(bool allow_end) {
     }
     done:;
     return element;
+}
+
+void Parser::parse_xml_declaration(Document& document) {
+    // Version must be specified.
+    bool version_info_parsed = false;
+    // Tracks which attributes can still be seen.
+    bool version_info_possible = true;
+    bool encoding_declaration_possible = true;
+    bool standalone_declaration_possible = true;
+    while (true) {
+        Char c = this->get();
+        if (is_whitespace(c)) {
+            operator++();
+            continue;
+        }
+        if (c == QUESTION_MARK) {
+            operator++();
+            if (this->get() != RIGHT_ANGLE_BRACKET) {
+                throw;
+            }
+            operator++();
+            break;
+        }
+        std::pair<String, String> attribute = this->parse_attribute();
+        if (attribute.first == XML_DECLARATION_VERSION_NAME) {
+            String& version = attribute.second;
+            if (!version_info_possible || !valid_version(version)) {
+                throw;
+            }
+            version_info_parsed = true;
+            version_info_possible = false;
+            document.version = version;
+        } else if (attribute.first == XML_DECLARATION_ENCODING_NAME) {
+            String& encoding = attribute.second;
+            if (!encoding_declaration_possible) {
+                throw;
+            }
+            // case-insensitive
+            std::transform(encoding.begin(), encoding.end(), encoding.begin(), [](Char c) {
+                return std::tolower(c);
+            });
+            if (!valid_encoding(encoding)) {
+                throw;
+            }
+            version_info_possible = false;
+            encoding_declaration_possible = false;
+            document.encoding = encoding;
+        } else if (attribute.first == XML_DECLARATION_STANDALONE_NAME) {
+            if (!standalone_declaration_possible) {
+                throw;
+            }
+            version_info_possible = false;
+            encoding_declaration_possible = false;
+            standalone_declaration_possible = false;
+            document.standalone = get_standalone_value(attribute.second);
+        } else {
+            // Unknown XML declaration attribute.
+            throw;
+        }
+    }
+    if (!version_info_parsed) {
+        throw;
+    }
+}
+
+Document Parser::parse_document() {
+    Document document;
+    // IMPORTANT - XML declaration MUST be the very first thing in the document
+    // or else cannot be included. NOT EVEN WHITESPACE BEFORE IT.
+    bool xml_declaration_possible = true;
+    bool doctype_definition_seen = false;
+    bool root_seen = false;
+    while (!this->eof()) {
+        Char c = this->get();
+        if (is_whitespace(c)) {
+            operator++();
+            xml_declaration_possible = false;
+            continue;
+        }
+        // Surprisingly, only '<' valid other than whitespace in starting
+        // something new. If not, then throw. If so, deduce what is coming up.
+        if (c != LEFT_ANGLE_BRACKET) {
+            throw;
+        }
+        switch (this->peek()) {
+            case QUESTION_MARK: {
+                // XML declaration or processing instruction.
+                operator++();
+                operator++();
+                ProcessingInstruction pi = this->parse_processing_instruction(xml_declaration_possible);
+                if (pi.target == String("xml")) {
+                    // Indeed XML declaration.
+                    this->parse_xml_declaration(document);
+                } else {
+                    document.processing_instructions.push_back(pi);
+                }
+                break;
+            }
+            case EXCLAMATION_MARK:
+                // Document type definition or comment.
+                operator++();
+                operator++();
+                if (this->get() == '-') {
+                    // Hints a comment - need to check further: <!--.
+                    operator++();
+                    if (this->get() != '-') {
+                        throw;
+                    }
+                    operator++();
+                    this->parse_comment();
+                } else {
+                    // Must be DOCTYPE definition if not a comment - confirm.
+                    String required_string = "DOCTYPE";
+                    for (Char required : required_string) {
+                        if (this->get() != required) {
+                            throw;
+                        }
+                        operator++();
+                    }
+                    if (doctype_definition_seen) {
+                        // Only one DOCTYPE definition permitted
+                        throw;
+                    }
+                    doctype_definition_seen = true;
+                    /* TO IMPLEMENT */
+                    break;
+                }
+                break;
+            default:
+                // Must be the root element - cannot be anything else.
+                if (root_seen) {
+                    // Only 1 root element permitted.
+                    throw;
+                }
+                root_seen = true;
+                document.root = this->parse_element();
+        }
+        xml_declaration_possible = false;
+    }
+    if (!root_seen) {
+        // No root element seen - invalid doc.
+        throw;
+    }
+    return document;
 }
 
 }

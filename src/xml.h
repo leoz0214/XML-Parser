@@ -7,9 +7,7 @@
 
 namespace xml {
 
-// Actual parsing logic - toplevel parsing function for Document.
-void parse(Parser&);
-// Accept string to parse.
-void parse(const std::string&);
+// Accept string to parse, and returns the parsed document.
+Document parse(const std::string&);
 
 }

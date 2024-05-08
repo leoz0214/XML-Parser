@@ -86,7 +86,24 @@ bool valid_name(const String&);
 
 // Ensures attribute character is valid.
 static String INVALID_ATTRIBUTE_VALUE_CHARACTERS {TAG_OPEN, AMPERSAND};
+static String ATTRIBUTE_NAME_TERMINATORS = []() {
+    String valid_chars(WHITESPACE.begin(), WHITESPACE.end());
+    valid_chars.push_back(EQUAL);
+    return valid_chars;
+}();
 bool valid_attribute_value_character(Char);
+
+// XML declaration handling.
+static String XML_DECLARATION_VERSION_NAME = "version";
+static String XML_DECLARATION_ENCODING_NAME = "encoding";
+static String XML_DECLARATION_STANDALONE_NAME = "standalone";
+// Currently supported encodings by THIS XML PARSER (lower case).
+static std::vector<String> SUPPORTED_ENCODINGS {"utf-8"};
+// Standalone is either 'yes' or 'no'
+static std::map<String, bool> STANDALONE_VALUES {{"yes", true}, {"no", false}};
+bool valid_version(const String&);
+bool valid_encoding(const String&);
+bool get_standalone_value(const String&);
 
 // Tag types: start, end, empty.
 enum class TagType {start, end, empty};
@@ -117,6 +134,15 @@ struct Element {
     String text;
     Tag tag;
     std::vector<Element> children;
+    std::vector<ProcessingInstruction> processing_instructions;
+};
+
+// Ultimate document class - contains everything about the XML document.
+struct Document {
+    String version = "1.0";
+    String encoding = "utf-8";
+    bool standalone = true;
+    Element root;
     std::vector<ProcessingInstruction> processing_instructions;
 };
 
