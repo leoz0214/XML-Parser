@@ -114,4 +114,21 @@ bool get_standalone_value(const String& string) {
     return STANDALONE_VALUES.at(string);
 }
 
+ExternalIDType get_external_id_type(const String& string) {
+    return EXTERNAL_ID_TYPES.at(string);
+}
+
+bool valid_public_id_character(Char c) {
+    auto possible_range_it = PUBLIC_ID_CHARACTER_RANGES.lower_bound({c, c});
+    if (
+        possible_range_it != PUBLIC_ID_CHARACTER_RANGES.end()
+        && c >= possible_range_it->first && c <= possible_range_it->second
+    ) {
+        return true;
+    }
+    return std::find(
+        PUBLIC_ID_CHARACTERS.cbegin(), PUBLIC_ID_CHARACTERS.cend(), c
+    ) != PUBLIC_ID_CHARACTERS.cend();
+}
+
 }

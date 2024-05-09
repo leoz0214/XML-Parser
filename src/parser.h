@@ -19,6 +19,12 @@ class Parser {
     String parse_cdata();
     ProcessingInstruction parse_processing_instruction(bool = false);
     void parse_xml_declaration(Document&);
+    DoctypeDeclaration parse_doctype_declaration();
+    void parse_internal_dtd_subset(DoctypeDeclaration&);
+    void parse_markup_declaration(DoctypeDeclaration&);
+    String parse_public_id();
+    String parse_system_id();
+    ExternalID parse_external_id();
     Char get();
     Char peek();
     void operator++();

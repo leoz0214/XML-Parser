@@ -137,11 +137,48 @@ struct Element {
     std::vector<ProcessingInstruction> processing_instructions;
 };
 
+// External ID for external entities.
+enum class ExternalIDType {system, public_, none};
+struct ExternalID {
+    ExternalIDType type = ExternalIDType::none;
+    // Only should be accessed if it is SYSTEM or PUBLIC (exists).
+    String system_id;
+    // Only should be accessed if it is PUBLIC.
+    String public_id;
+};
+static std::map<String, ExternalIDType> EXTERNAL_ID_TYPES {
+    {"SYSTEM", ExternalIDType::system}, {"PUBLIC", ExternalIDType::public_}
+};
+ExternalIDType get_external_id_type(const String&);
+static CharacterRanges PUBLIC_ID_CHARACTER_RANGES({
+    {'a', 'z'}, {'A', 'Z'}, {'0', '9'}
+}, character_ranges_comparator);
+// Too cumbersome to create separate range per valid public ID character.
+static String PUBLIC_ID_CHARACTERS = "-'()+,./:=?;!*#@$_% \u000d\u000a";
+bool valid_public_id_character(Char);
+
+// Stores info about the DOCTYPE declaration, if any.
+// A DTD is optional - if not provided, assume zero restrictions on actual elements.
+struct DoctypeDeclaration {
+    bool exists = false;
+    String root_name;
+    ExternalID external_id;
+    std::vector<ProcessingInstruction> processing_instructions;
+};
+// Characters which may signal end of root name in DTD.
+static String DOCTYPE_DECLARATION_ROOT_NAME_TERMINATORS = []() {
+    String valid_chars(WHITESPACE.begin(), WHITESPACE.end());
+    valid_chars.push_back(LEFT_SQUARE_BRACKET);
+    valid_chars.push_back(RIGHT_ANGLE_BRACKET);
+    return valid_chars;
+}();
+
 // Ultimate document class - contains everything about the XML document.
 struct Document {
     String version = "1.0";
     String encoding = "utf-8";
     bool standalone = true;
+    DoctypeDeclaration doctype_declaration;
     Element root;
     std::vector<ProcessingInstruction> processing_instructions;
 };

@@ -2,6 +2,7 @@
 #include <cassert>
 #include <functional>
 #include <string>
+#include <iostream>
 #include "../src/parser.h"
 
 
@@ -9,9 +10,11 @@ using namespace xml;
 
 
 typedef std::function<void(const Element&)> TestElement;
+unsigned test_number = 0;
 void test_element(const std::string& string, TestElement callback) {
     Element element = Parser(string).parse_element();
     callback(element);
+    std::cout << "Element Test " << test_number++ << " passed.\n";
 }
 
 

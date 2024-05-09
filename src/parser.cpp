@@ -398,12 +398,160 @@ void Parser::parse_xml_declaration(Document& document) {
     }
 }
 
+String Parser::parse_public_id() {
+    Char quote = this->get();
+    operator++();
+    if (quote != SINGLE_QUOTE && quote != DOUBLE_QUOTE) {
+        throw;
+    }
+    String public_id;
+    while (true) {
+        Char c = this->get();
+        operator++();
+        if (c == quote) {
+            break;
+        }
+        if (!valid_public_id_character(c)) {
+            throw;
+        }
+        public_id.push_back(c);
+    }
+    return public_id;
+}
+
+String Parser::parse_system_id() {
+    Char quote = this->get();
+    operator++();
+    if (quote != SINGLE_QUOTE && quote != DOUBLE_QUOTE) {
+        throw;
+    }
+    String system_id;
+    while (true) {
+        Char c = this->get();
+        operator++();
+        if (c == quote) {
+            break;
+        }
+        if (!valid_character(c)) {
+            throw;
+        }
+        system_id.push_back(c);
+    }
+    return system_id;
+}
+
+ExternalID Parser::parse_external_id() {
+    ExternalID external_id;
+    // Looking for PUBLIC / SYSTEM - parsing like a name is just fine.
+    String type_string = this->parse_name(WHITESPACE, false);
+    external_id.type = get_external_id_type(type_string);
+    while (is_whitespace(this->get())) {
+        operator++();
+    }
+    if (external_id.type == ExternalIDType::public_) {
+        external_id.public_id = this->parse_public_id();
+        while (is_whitespace(this->get())) {
+            operator++();
+        }
+    }
+    external_id.system_id = this->parse_system_id();
+    return external_id;
+}
+
+void Parser::parse_internal_dtd_subset(DoctypeDeclaration& dtd) {
+    while (true) {
+        Char c = this->get();
+        operator++();
+        if (c == RIGHT_SQUARE_BRACKET) {
+            return;
+        }
+        if (is_whitespace(c)) {
+            continue;
+        } else if (c == LEFT_ANGLE_BRACKET) {
+            // Must be exclamation mark or processing instruction or invalid.
+            c = this->get();
+            if (c != EXCLAMATION_MARK) {
+                if (c == QUESTION_MARK) {
+                    operator++();
+                    dtd.processing_instructions.push_back(this->parse_processing_instruction());
+                    continue;
+                }
+                throw;
+            }
+            operator++();
+            if (this->get() == HYPHEN) {
+                // Comment or invalid.
+                operator++();
+                if (this->get() != HYPHEN) {
+                    throw;
+                }
+                operator++();
+                this->parse_comment();
+            } else {
+                // Markup declaration or invalid.
+                this->parse_markup_declaration(dtd);
+            }
+        } else {
+            throw;
+        }
+    }
+}
+
+void Parser::parse_markup_declaration(DoctypeDeclaration& dtd) {
+    String markup_declaration_type = this->parse_name(WHITESPACE, false);
+    if (markup_declaration_type == String("ELEMENT")) {
+        // Element type declaration.
+    } else if (markup_declaration_type == String("ATTLIST")) {
+        // Attribute list declaration.
+    } else if (markup_declaration_type == String("ENTITY")) {
+        // Entity declaration.
+    } else if (markup_declaration_type == String("NOTATION")) {
+        // Notation declaration.
+    } else {
+        // Unknown markup declaration type.
+        throw;
+    }
+}
+
+DoctypeDeclaration Parser::parse_doctype_declaration() {
+    DoctypeDeclaration dtd;
+    dtd.exists = true;
+    while (is_whitespace(this->get())) {
+        operator++();
+    }
+    dtd.root_name = this->parse_name(DOCTYPE_DECLARATION_ROOT_NAME_TERMINATORS);
+    bool can_parse_external_id = true;
+    bool can_parse_internal_subset = true;
+    while (true) {
+        Char c = this->get();
+        if (c == RIGHT_ANGLE_BRACKET) {
+            operator++();
+            break;
+        } else if (is_whitespace(c)) {
+            operator++();
+        } else if (c == LEFT_SQUARE_BRACKET && can_parse_internal_subset) {
+            operator++();
+            can_parse_external_id = false;
+            can_parse_internal_subset = false;
+            this->parse_internal_dtd_subset(dtd);
+        } else {
+            // External ID or invalid.
+            if (!can_parse_external_id) {
+                throw;
+            }
+            can_parse_external_id = false;
+            dtd.external_id = this->parse_external_id();
+        }
+    }
+    return dtd;
+}
+
 Document Parser::parse_document() {
     Document document;
     // IMPORTANT - XML declaration MUST be the very first thing in the document
     // or else cannot be included. NOT EVEN WHITESPACE BEFORE IT.
     bool xml_declaration_possible = true;
-    bool doctype_definition_seen = false;
+    bool doctype_declaration_seen = false;
     bool root_seen = false;
     while (!this->eof()) {
         Char c = this->get();
@@ -444,7 +592,7 @@ Document Parser::parse_document() {
                     operator++();
                     this->parse_comment();
                 } else {
-                    // Must be DOCTYPE definition if not a comment - confirm.
+                    // Must be DOCTYPE declaration if not a comment - confirm.
                     String required_string = "DOCTYPE";
                     for (Char required : required_string) {
                         if (this->get() != required) {
@@ -452,12 +600,13 @@ Document Parser::parse_document() {
                         }
                         operator++();
                     }
-                    if (doctype_definition_seen) {
-                        // Only one DOCTYPE definition permitted
+                    if (doctype_declaration_seen || root_seen) {
+                        // Only one DOCTYPE declaration permitted, before root.
                         throw;
                     }
-                    doctype_definition_seen = true;
-                    /* TO IMPLEMENT */
+                    doctype_declaration_seen = true;
+                    document.doctype_declaration.exists = true;
+                    document.doctype_declaration = this->parse_doctype_declaration();
                     break;
                 }
                 break;
