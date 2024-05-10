@@ -26,6 +26,8 @@ constexpr char LEFT_ANGLE_BRACKET = '<';
 constexpr char RIGHT_ANGLE_BRACKET = '>';
 constexpr char LEFT_SQUARE_BRACKET = '[';
 constexpr char RIGHT_SQUARE_BRACKET = ']';
+constexpr char LEFT_PARENTHESIS = '(';
+constexpr char RIGHT_PARENTHESIS = ')';
 constexpr char TAG_OPEN = LEFT_ANGLE_BRACKET;
 constexpr char TAG_CLOSE = RIGHT_ANGLE_BRACKET;
 constexpr char SOLIDUS = '/';
@@ -36,10 +38,21 @@ constexpr char AMPERSAND = '&';
 constexpr char EXCLAMATION_MARK = '!';
 constexpr char QUESTION_MARK = '?';
 constexpr char HYPHEN = '-';
+constexpr char ASTERISK = '*';
+constexpr char PLUS = '+';
+constexpr char COMMA = ',';
+constexpr char VERTICAL_BAR = '|';
+constexpr char OCTOTHORPE = '#';
 
 
 // Whitespace characters as per standard.
 static String WHITESPACE {0x20, 0x09, 0x0D, 0x0A};
+static String WHITESPACE_AND_RIGHT_ANGLE_BRACKET = []() {
+    String valid_chars(WHITESPACE.begin(), WHITESPACE.end());
+    valid_chars.push_back(TAG_CLOSE);
+    return valid_chars;
+}();
+
 // Returns true if character is indeed whitespace.
 bool is_whitespace(Char);
 
@@ -157,6 +170,46 @@ static CharacterRanges PUBLIC_ID_CHARACTER_RANGES({
 static String PUBLIC_ID_CHARACTERS = "-'()+,./:=?;!*#@$_% \u000d\u000a";
 bool valid_public_id_character(Char);
 
+// Stores element declaration information.
+enum class ElementType {empty, any, mixed, children};
+enum class ElementContentCount {one, zero_or_one, zero_or_more, one_or_more};
+struct ElementContentModel {
+    ElementContentCount count = ElementContentCount::one;
+    bool is_sequence = true;
+    std::vector<ElementContentModel> parts;
+    // For leaves only (standalone names with possible count).
+    bool is_name = false;
+    String name;
+};
+struct MixedContentModel {
+    std::set<String> choices;
+};
+struct ElementDeclaration {
+    ElementType type;
+    String name;
+    // Only for element type 'children'
+    ElementContentModel element_content;
+    // Only for element type 'mixed'
+    MixedContentModel mixed_content;
+};
+static std::map<Char, ElementContentCount> ELEMENT_CONTENT_COUNT_SYMBOLS {
+    {QUESTION_MARK, ElementContentCount::zero_or_one},
+    {ASTERISK, ElementContentCount::zero_or_more}, {PLUS, ElementContentCount::one_or_more}
+};
+static String ELEMENT_CONTENT_NAME_TERMINATORS = []() {
+    String valid_chars(WHITESPACE.begin(), WHITESPACE.end());
+    valid_chars.insert(valid_chars.end(), {
+        QUESTION_MARK, ASTERISK, PLUS, COMMA, VERTICAL_BAR, RIGHT_PARENTHESIS});
+    return valid_chars;
+}();
+static String PCDATA = "PCDATA";
+static String MIXED_CONTENT_NAME_TERMINATORS = []() {
+    String valid_chars(WHITESPACE.begin(), WHITESPACE.end());
+    valid_chars.push_back(VERTICAL_BAR);
+    valid_chars.push_back(RIGHT_ANGLE_BRACKET);
+    return valid_chars;
+}();
+
 // Stores info about the DOCTYPE declaration, if any.
 // A DTD is optional - if not provided, assume zero restrictions on actual elements.
 struct DoctypeDeclaration {
@@ -164,6 +217,7 @@ struct DoctypeDeclaration {
     String root_name;
     ExternalID external_id;
     std::vector<ProcessingInstruction> processing_instructions;
+    std::map<String, ElementDeclaration> element_declarations;
 };
 // Characters which may signal end of root name in DTD.
 static String DOCTYPE_DECLARATION_ROOT_NAME_TERMINATORS = []() {

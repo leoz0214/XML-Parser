@@ -20,11 +20,14 @@ class Parser {
     ProcessingInstruction parse_processing_instruction(bool = false);
     void parse_xml_declaration(Document&);
     DoctypeDeclaration parse_doctype_declaration();
-    void parse_internal_dtd_subset(DoctypeDeclaration&);
-    void parse_markup_declaration(DoctypeDeclaration&);
     String parse_public_id();
     String parse_system_id();
     ExternalID parse_external_id();
+    void parse_internal_dtd_subset(DoctypeDeclaration&);
+    void parse_markup_declaration(DoctypeDeclaration&);
+    void parse_element_declaration(DoctypeDeclaration&);
+    ElementContentModel parse_element_content_model();
+    MixedContentModel parse_mixed_content_model();
     Char get();
     Char peek();
     void operator++();

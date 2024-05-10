@@ -83,4 +83,38 @@ int main() {
         assert((dtd.processing_instructions[0].target == String("doc-pi")));
         assert((document.root.tag.name == String("r")));
     });
+    test_document(R"(<?xml version='1.0' encoding='utf-8'?>
+        <!DOCTYPE root [
+            <!ELEMENT e EMPTY>
+            <!ELEMENT    a    ANY    >
+            <!ELEMENT spec (front, body, back?)>
+            <!ELEMENT div1 (head, (p | list+ | note)*, div2*)>
+            <!ELEMENT  p (#PCDATA|a|ul|b|i|em)*>
+            <!ELEMENT b       (#PCDATA )>
+        ]><root></root>
+    )", [](const Document& document) {
+        auto element_decls = document.doctype_declaration.element_declarations;
+        assert((element_decls.size() == 6));
+        assert((element_decls.at("e").type == ElementType::empty));
+        assert((element_decls.at("a").type == ElementType::any));
+        ElementDeclaration spec = element_decls.at("spec");
+        assert((spec.type == ElementType::children));
+        assert((spec.element_content.is_sequence));
+        assert((spec.element_content.parts.size() == 3));
+        assert((spec.element_content.parts.at(0).is_name));
+        assert((spec.element_content.parts.at(0).name == String("front")));
+        assert((spec.element_content.parts.at(0).count == ElementContentCount::one));
+        assert((spec.element_content.parts.at(2).count == ElementContentCount::zero_or_one));
+        ElementDeclaration div1 = element_decls.at("div1");
+        assert((div1.element_content.parts.size() == 3));
+        ElementContentModel div1_1 = div1.element_content.parts.at(1);
+        assert((div1_1.count == ElementContentCount::zero_or_more));
+        assert((div1_1.parts.size() == 3));
+        assert((div1_1.parts.at(1).name == String("list")));
+        assert((div1_1.parts.at(1).count == ElementContentCount::one_or_more));
+        ElementDeclaration p = element_decls.at("p");
+        assert((p.type == ElementType::mixed));
+        assert((p.mixed_content.choices.size() == 5));
+        assert((element_decls.at("b").mixed_content.choices.empty()));
+    });
 }

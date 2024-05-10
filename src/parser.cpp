@@ -1,5 +1,6 @@
 #include "parser.h"
 
+#include <iostream>
 
 namespace xml {
 
@@ -500,7 +501,7 @@ void Parser::parse_internal_dtd_subset(DoctypeDeclaration& dtd) {
 void Parser::parse_markup_declaration(DoctypeDeclaration& dtd) {
     String markup_declaration_type = this->parse_name(WHITESPACE, false);
     if (markup_declaration_type == String("ELEMENT")) {
-        // Element type declaration.
+        this->parse_element_declaration(dtd);
     } else if (markup_declaration_type == String("ATTLIST")) {
         // Attribute list declaration.
     } else if (markup_declaration_type == String("ENTITY")) {
@@ -511,6 +512,175 @@ void Parser::parse_markup_declaration(DoctypeDeclaration& dtd) {
         // Unknown markup declaration type.
         throw;
     }
+}
+
+void Parser::parse_element_declaration(DoctypeDeclaration& dtd) {
+    while (is_whitespace(this->get())) {
+        operator++();
+    }
+    ElementDeclaration element_declaration;
+    element_declaration.name = this->parse_name(WHITESPACE);
+    // Duplicate declarations for same element name illegal.
+    if (dtd.element_declarations.count(element_declaration.name)) {
+        throw;
+    }
+    while (is_whitespace(this->get())) {
+        operator++();
+    }
+    // Empty, any, children, mixed OR invalid.
+    if (this->get() == LEFT_PARENTHESIS) {
+        // Mixed/element content.
+        operator++();
+        if (this->get() == OCTOTHORPE) {
+            // Indicates mixed content or invalid.
+            element_declaration.type = ElementType::mixed;
+            element_declaration.mixed_content = this->parse_mixed_content_model();
+        } else {
+            // Indicates element content or invalid.
+            element_declaration.type = ElementType::children;
+            element_declaration.element_content = this->parse_element_content_model();
+        }
+    } else {
+        // Must be EMPTY or ANY otherwise.
+        String element_type = this->parse_name(WHITESPACE_AND_RIGHT_ANGLE_BRACKET, false);
+        if (element_type == String("EMPTY")) {
+            element_declaration.type = ElementType::empty;
+        } else if (element_type == String("ANY")) {
+            element_declaration.type = ElementType::any;
+        } else {
+            throw;
+        }
+    }
+    while (is_whitespace(this->get())) {
+        operator++();
+    }
+    if (this->get() != RIGHT_ANGLE_BRACKET) {
+        throw;
+    }
+    operator++();
+    dtd.element_declarations[element_declaration.name] = element_declaration;
+}
+
+ElementContentModel Parser::parse_element_content_model() {
+    ElementContentModel ecm;
+    bool separator_seen = false;
+    bool separator_next = false;
+    while (true) {
+        Char c = this->get();
+        if (is_whitespace(c)) {
+            operator++();
+            continue;
+        }
+        if (c == RIGHT_PARENTHESIS) {
+            operator++();
+            // Cannot end on separator - ensure this is not case (also cannot be empty).
+            if (!separator_next) {
+                throw;
+            }
+            if (ELEMENT_CONTENT_COUNT_SYMBOLS.count(this->get())) {
+                ecm.count == ELEMENT_CONTENT_COUNT_SYMBOLS.at(this->get());
+                operator++();
+            }
+            break;
+        } else if (c == COMMA || c == VERTICAL_BAR) {
+            operator++();
+            // Separator - ensure appropriate.
+            if (!separator_next) {
+                // Not expecting separator at this time - invalid.
+                throw;
+            }
+            if (separator_seen) {
+                // If not first separator, ensure consistent with previous seps.
+                // If it is sequence, expecting ',' else if choice, expecting '|'
+                if ((c == COMMA) != ecm.is_sequence) {
+                    throw;
+                }
+            } else {
+                // First separator.
+                separator_seen = true;
+                ecm.is_sequence = (c == COMMA);
+            }
+            separator_next = false;
+        } else {
+            // Element content part - sub-content-model or name.
+            if (separator_next) {
+                // Expecting separator at this time, but not seen.
+                throw;
+            }
+            if (c == LEFT_PARENTHESIS) {
+                operator++();
+                ecm.parts.push_back(this->parse_element_content_model());
+            } else {
+                ElementContentModel sub_ecm;
+                sub_ecm.is_sequence = false;
+                sub_ecm.is_name = true;
+                sub_ecm.name = this->parse_name(ELEMENT_CONTENT_NAME_TERMINATORS);
+                if (ELEMENT_CONTENT_COUNT_SYMBOLS.count(this->get())) {
+                    sub_ecm.count = ELEMENT_CONTENT_COUNT_SYMBOLS.at(this->get());
+                    operator++();
+                }
+                ecm.parts.push_back(sub_ecm);
+            }
+            separator_next = true;
+        }
+    }
+    return ecm;
+}
+
+MixedContentModel Parser::parse_mixed_content_model() {
+    MixedContentModel mcm;
+    bool first = true;
+    bool separator_next = false;
+    // #
+    operator++();
+    while (true) {
+        Char c = this->get();
+        if (is_whitespace(c)) {
+            operator++();
+            continue;
+        }
+        if (c == RIGHT_PARENTHESIS) {
+            operator++();
+            if (!separator_next) {
+                // Disallow empty MCM without even #PCDATA, or one ending in separator.
+                throw;
+            }
+            if (!mcm.choices.empty()) {
+                if (this->get() != ASTERISK) {
+                    // MCM actually ends in )* if not empty.
+                    throw;
+                }
+                operator++();
+            }
+            break;
+        } else if (c == VERTICAL_BAR) {
+            operator++();
+            if (!separator_next) {
+                throw;
+            }
+            separator_next = false;
+        } else {
+            if (separator_next) {
+                throw;
+            }
+            String name = this->parse_name(MIXED_CONTENT_NAME_TERMINATORS);
+            if (first) {
+                // Must be PCDATA to begin with (excluding octothorpe).
+                if (name != PCDATA) {
+                    throw;
+                }
+                first = false;
+            } else {
+                // Duplicate element names are prohibited.
+                if (mcm.choices.count(name)) {
+                    throw;
+                }
+                mcm.choices.insert(name);
+            }
+            separator_next = true;
+        }
+    }
+    return mcm;
 }
 
 DoctypeDeclaration Parser::parse_doctype_declaration() {
