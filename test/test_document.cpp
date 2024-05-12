@@ -88,10 +88,10 @@ int main() {
             <!ELEMENT e EMPTY>
             <!ELEMENT    a    ANY    >
             <!ELEMENT spec (front, body, back?)>
-            <!ELEMENT div1 (head, (p | list+ | note)*, div2*)>
+            <!ELEMENT div1 ( head, (  p | list+ | note)*, div2*)>
             <!ELEMENT  p (#PCDATA|a|ul|b|i|em)*>
-            <!ELEMENT b       (#PCDATA )>
-        ]><root></root>
+            <!ELEMENT b       ( #PCDATA )>
+        ]><root>Testing element entity declarations</root>
     )", [](const Document& document) {
         auto element_decls = document.doctype_declaration.element_declarations;
         assert((element_decls.size() == 6));
@@ -116,5 +116,22 @@ int main() {
         assert((p.type == ElementType::mixed));
         assert((p.mixed_content.choices.size() == 5));
         assert((element_decls.at("b").mixed_content.choices.empty()));
+    });
+    test_document(R"(<!DOCTYPE root SYSTEM "sys/a" [
+        <!NOTATION n1    SYSTEM "Notation1">
+        <!NOTATION n2 PUBLIC "Notation2" 'N2'>
+        <!NOTATION n3 PUBLIC "Notation3">]><root> </root>
+    )", [](const Document& document) {
+        auto notations = document.doctype_declaration.notation_declarations;
+        assert((notations.size() == 3));
+        assert((notations.at("n1").has_system_id));
+        assert((!notations.at("n1").has_public_id));
+        assert((notations.at("n1").system_id == String("Notation1")));
+        assert((notations.at("n2").has_public_id));
+        assert((notations.at("n2").has_system_id));
+        assert((notations.at("n2").public_id == String("Notation2")));
+        assert((notations.at("n2").system_id == String("N2")));
+        assert((!notations.at("n3").has_system_id));
+        assert((notations.at("n3").public_id == String("Notation3")));
     });
 }

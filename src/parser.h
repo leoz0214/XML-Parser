@@ -12,12 +12,12 @@ class Parser {
     const std::string* data;
     std::size_t pos = 0;
     std::size_t increment = 0;
-    String parse_name(const String&, bool = true);
+    String parse_name(const String&, bool validate = true);
     std::pair<String, String> parse_attribute();
     Tag parse_tag();
     void parse_comment();
     String parse_cdata();
-    ProcessingInstruction parse_processing_instruction(bool = false);
+    ProcessingInstruction parse_processing_instruction(bool detect_xml_declaration = false);
     void parse_xml_declaration(Document&);
     DoctypeDeclaration parse_doctype_declaration();
     String parse_public_id();
@@ -28,10 +28,14 @@ class Parser {
     void parse_element_declaration(DoctypeDeclaration&);
     ElementContentModel parse_element_content_model();
     MixedContentModel parse_mixed_content_model();
+    void parse_attribute_list_declaration(DoctypeDeclaration&);
+    void parse_attribute_declaration(AttributeListDeclaration&);
+    void parse_notation_declaration(DoctypeDeclaration&);
     Char get();
     Char peek();
     void operator++();
     bool eof();
+    void ignore_whitespace();
     public:
         Parser(const std::string&);
         Element parse_element(bool = false);

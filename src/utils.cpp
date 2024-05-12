@@ -131,4 +131,8 @@ bool valid_public_id_character(Char c) {
     ) != PUBLIC_ID_CHARACTERS.cend();
 }
 
+AttributeType get_attribute_type(const String& string) {
+    return ATTRIBUTE_TYPES.at(string);
+}
+
 }

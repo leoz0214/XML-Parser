@@ -1,6 +1,5 @@
 #include "parser.h"
 
-#include <iostream>
 
 namespace xml {
 
@@ -35,6 +34,12 @@ bool Parser::eof() {
     return this->pos == this->data->size();
 }
 
+void Parser::ignore_whitespace() {
+    while (is_whitespace(this->get())) {
+        operator++();
+    }
+}
+
 String Parser::parse_name(const String& until, bool validate) {
     String name;
     while (true) {
@@ -65,10 +70,7 @@ std::pair<String, String> Parser::parse_attribute() {
     }
     // Increment the '='
     operator++();
-    // Ignore whitespace until something not whitespace is reached.
-    while (is_whitespace(this->get())) {
-        operator++();
-    }
+    this->ignore_whitespace();
     // Ensure opening quote (double or single accepted).
     Char quote = this->get();
     if (quote != SINGLE_QUOTE && quote != DOUBLE_QUOTE) {
@@ -446,14 +448,14 @@ ExternalID Parser::parse_external_id() {
     // Looking for PUBLIC / SYSTEM - parsing like a name is just fine.
     String type_string = this->parse_name(WHITESPACE, false);
     external_id.type = get_external_id_type(type_string);
-    while (is_whitespace(this->get())) {
-        operator++();
-    }
+    this->ignore_whitespace();
     if (external_id.type == ExternalIDType::public_) {
         external_id.public_id = this->parse_public_id();
-        while (is_whitespace(this->get())) {
-            operator++();
+        if (!is_whitespace(this->get())) {
+            // Min 1 whitespace between public/system ID.
+            throw;
         }
+        this->ignore_whitespace();
     }
     external_id.system_id = this->parse_system_id();
     return external_id;
@@ -503,11 +505,11 @@ void Parser::parse_markup_declaration(DoctypeDeclaration& dtd) {
     if (markup_declaration_type == String("ELEMENT")) {
         this->parse_element_declaration(dtd);
     } else if (markup_declaration_type == String("ATTLIST")) {
-        // Attribute list declaration.
+        this->parse_attribute_list_declaration(dtd);
     } else if (markup_declaration_type == String("ENTITY")) {
         // Entity declaration.
     } else if (markup_declaration_type == String("NOTATION")) {
-        // Notation declaration.
+       this->parse_notation_declaration(dtd);
     } else {
         // Unknown markup declaration type.
         throw;
@@ -515,22 +517,19 @@ void Parser::parse_markup_declaration(DoctypeDeclaration& dtd) {
 }
 
 void Parser::parse_element_declaration(DoctypeDeclaration& dtd) {
-    while (is_whitespace(this->get())) {
-        operator++();
-    }
+    this->ignore_whitespace();
     ElementDeclaration element_declaration;
     element_declaration.name = this->parse_name(WHITESPACE);
     // Duplicate declarations for same element name illegal.
     if (dtd.element_declarations.count(element_declaration.name)) {
         throw;
     }
-    while (is_whitespace(this->get())) {
-        operator++();
-    }
+    this->ignore_whitespace();
     // Empty, any, children, mixed OR invalid.
     if (this->get() == LEFT_PARENTHESIS) {
         // Mixed/element content.
         operator++();
+        this->ignore_whitespace();
         if (this->get() == OCTOTHORPE) {
             // Indicates mixed content or invalid.
             element_declaration.type = ElementType::mixed;
@@ -551,9 +550,7 @@ void Parser::parse_element_declaration(DoctypeDeclaration& dtd) {
             throw;
         }
     }
-    while (is_whitespace(this->get())) {
-        operator++();
-    }
+    this->ignore_whitespace();
     if (this->get() != RIGHT_ANGLE_BRACKET) {
         throw;
     }
@@ -578,7 +575,7 @@ ElementContentModel Parser::parse_element_content_model() {
                 throw;
             }
             if (ELEMENT_CONTENT_COUNT_SYMBOLS.count(this->get())) {
-                ecm.count == ELEMENT_CONTENT_COUNT_SYMBOLS.at(this->get());
+                ecm.count = ELEMENT_CONTENT_COUNT_SYMBOLS.at(this->get());
                 operator++();
             }
             break;
@@ -609,6 +606,9 @@ ElementContentModel Parser::parse_element_content_model() {
             }
             if (c == LEFT_PARENTHESIS) {
                 operator++();
+                while (is_whitespace(this->get())) {
+                    operator++();
+                }
                 ecm.parts.push_back(this->parse_element_content_model());
             } else {
                 ElementContentModel sub_ecm;
@@ -681,6 +681,72 @@ MixedContentModel Parser::parse_mixed_content_model() {
         }
     }
     return mcm;
+}
+
+void Parser::parse_attribute_list_declaration(DoctypeDeclaration& dtd) {
+    this->ignore_whitespace();
+    String element_name = this->parse_name(WHITESPACE);
+    this->ignore_whitespace();
+    while (true) {
+        Char c = this->get();
+        if (is_whitespace(c)) {
+            operator++();
+            continue;
+        }
+        if (c == RIGHT_ANGLE_BRACKET) {
+            operator++();
+            return;
+        }
+        this->parse_attribute_declaration(dtd.attribute_list_declarations[element_name]);
+    }
+}
+
+void Parser::parse_attribute_declaration(AttributeListDeclaration& attlist) {
+
+}
+
+void Parser::parse_notation_declaration(DoctypeDeclaration& dtd) {
+    this->ignore_whitespace();
+    NotationDeclaration nd;
+    nd.name = this->parse_name(WHITESPACE);
+    if (dtd.notation_declarations.count(nd.name)) {
+        // Cannot have duplicate notation names.
+        throw;
+    }
+    this->ignore_whitespace();
+    String type = this->parse_name(WHITESPACE);
+    this->ignore_whitespace();
+    if (type == String("SYSTEM")) {
+        nd.has_public_id = false;
+        nd.has_system_id = true;
+        nd.system_id = this->parse_system_id();
+    } else if (type == String("PUBLIC")) {
+        nd.has_public_id = true;
+        nd.public_id = this->parse_public_id();
+        bool whitespace_seen = false;
+        while (is_whitespace(this->get())) {
+            operator++();
+            whitespace_seen = true;
+        }
+        nd.has_system_id = (this->get() != RIGHT_ANGLE_BRACKET);
+        if (nd.has_system_id) {
+            if (!whitespace_seen) {
+                // At least 1 whitespace between public/system ID.
+                throw;
+            }
+            // System ID is optional but does appear to exist here.
+            nd.system_id = this->parse_system_id();
+        }
+    } else {
+        // Not SYSTEM or PUBLIC -> invalid.
+        throw;
+    }
+    this->ignore_whitespace();
+    if (this->get() != RIGHT_ANGLE_BRACKET) {
+        throw;
+    }
+    operator++();
+    dtd.notation_declarations[nd.name] = nd;
 }
 
 DoctypeDeclaration Parser::parse_doctype_declaration() {

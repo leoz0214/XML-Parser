@@ -206,9 +206,40 @@ static String PCDATA = "PCDATA";
 static String MIXED_CONTENT_NAME_TERMINATORS = []() {
     String valid_chars(WHITESPACE.begin(), WHITESPACE.end());
     valid_chars.push_back(VERTICAL_BAR);
-    valid_chars.push_back(RIGHT_ANGLE_BRACKET);
+    valid_chars.push_back(RIGHT_PARENTHESIS);
     return valid_chars;
 }();
+
+// Attribute declaration handling.
+enum class AttributeType {
+    cdata, id, idref, idrefs, entity, entities, nmtoken, nmtokens, notation, enumeration
+};
+static std::map<String, AttributeType> ATTRIBUTE_TYPES {
+    {"CDATA", AttributeType::cdata}, {"ID", AttributeType::id},
+    {"IDREF", AttributeType::idref}, {"IDREFS", AttributeType::idrefs},
+    {"ENTITY", AttributeType::entity}, {"ENTITIES", AttributeType::entities},
+    {"NMTOKEN", AttributeType::nmtoken}, {"NMTOKENS", AttributeType::nmtokens},
+    {"NOTATION", AttributeType::notation} // Note, enumerations detected from '('
+};
+struct AttributeDeclaration {
+    String name;
+    AttributeType type;
+    // Only for notation attributes.
+    std::set<String> notations;
+    // Only for enumeration attributes.
+    std::set<String> enumerations;
+};
+AttributeType get_attribute_type(const String&);
+typedef std::map<String, AttributeDeclaration> AttributeListDeclaration;
+
+// Notation handling.
+struct NotationDeclaration {
+    String name;
+    bool has_system_id;
+    bool has_public_id;
+    String system_id;
+    String public_id;
+};
 
 // Stores info about the DOCTYPE declaration, if any.
 // A DTD is optional - if not provided, assume zero restrictions on actual elements.
@@ -218,6 +249,8 @@ struct DoctypeDeclaration {
     ExternalID external_id;
     std::vector<ProcessingInstruction> processing_instructions;
     std::map<String, ElementDeclaration> element_declarations;
+    std::map<String, AttributeListDeclaration> attribute_list_declarations;
+    std::map<String, NotationDeclaration> notation_declarations;
 };
 // Characters which may signal end of root name in DTD.
 static String DOCTYPE_DECLARATION_ROOT_NAME_TERMINATORS = []() {
