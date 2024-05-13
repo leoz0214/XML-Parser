@@ -62,15 +62,20 @@ String Parser::parse_name(const String& until, bool validate) {
     return name;
 }
 
-std::pair<String, String> Parser::parse_attribute() {
-    String name = this->parse_name(ATTRIBUTE_NAME_TERMINATORS);
-    // Ignore whitespace until '=' is reached.
-    while (this->get() != EQUAL) {
+String Parser::parse_nmtoken(const String& until) {
+    String nmtoken;
+    while (true) {
+        Char c = this->get();
+        if (std::find(until.cbegin(), until.cend(), c) != until.cend()) {
+            break;
+        }
+        nmtoken.push_back(c);
         operator++();
     }
-    // Increment the '='
-    operator++();
-    this->ignore_whitespace();
+    return nmtoken;
+}
+
+String Parser::parse_attribute_value() {
     // Ensure opening quote (double or single accepted).
     Char quote = this->get();
     if (quote != SINGLE_QUOTE && quote != DOUBLE_QUOTE) {
@@ -89,6 +94,19 @@ std::pair<String, String> Parser::parse_attribute() {
         }
         value.push_back(c);
     }
+    return value;
+}
+
+std::pair<String, String> Parser::parse_attribute() {
+    String name = this->parse_name(ATTRIBUTE_NAME_TERMINATORS);
+    // Ignore whitespace until '=' is reached.
+    while (this->get() != EQUAL) {
+        operator++();
+    }
+    // Increment the '='
+    operator++();
+    this->ignore_whitespace();
+    String value = this->parse_attribute_value();
     return {name, value};
 }
 
@@ -702,7 +720,144 @@ void Parser::parse_attribute_list_declaration(DoctypeDeclaration& dtd) {
 }
 
 void Parser::parse_attribute_declaration(AttributeListDeclaration& attlist) {
+    AttributeDeclaration ad;
+    ad.name = this->parse_name(WHITESPACE);
+    this->ignore_whitespace();
+    if (this->get() == LEFT_PARENTHESIS) {
+        // Can only be an enumeration.
+        ad.type = AttributeType::enumeration;
+        operator++();
+        ad.enumeration = this->parse_enumeration();
+    } else {
+        ad.type = get_attribute_type(this->parse_name(WHITESPACE));
+    }
+    this->ignore_whitespace();
+    if (ad.type == AttributeType::notation) {
+        operator++();
+        ad.notations = this->parse_notations();
+        this->ignore_whitespace();
+    }
+    if (this->get() == OCTOTHORPE) {
+        // Presence indication.
+        operator++();
+        String presence = this->parse_name(WHITESPACE_AND_RIGHT_ANGLE_BRACKET);
+        ad.presence = get_attribute_presence(presence);
+    }
+    // Only #FIXED or no presence indication permits a default value.
+    if (ad.presence == AttributePresence::fixed || ad.presence == AttributePresence::relaxed) {
+        this->ignore_whitespace();
+        ad.has_default_value = true;
+        ad.default_value = this->parse_attribute_value();
+    }
+    // Perform suitable validation possible right now. Uses fallback switch technique.
+    // Any attribute type not in the switch does not need validation at this time.
+    switch (ad.type) {
+        case AttributeType::id:
+            // Must be #REQUIRED or #IMPLIED.
+            if (ad.presence != AttributePresence::required && ad.presence != AttributePresence::implied) {
+                throw;
+            }
+            break;
+        case AttributeType::idref:
+        case AttributeType::entity:
+            // Default value must match Name.
+            if (ad.has_default_value && !valid_name(ad.default_value, true)) {
+                throw;
+            }
+            break;
+        case AttributeType::idrefs:
+        case AttributeType::entities:
+            // Default value must match Names.
+            if (ad.has_default_value && !valid_names(ad.default_value)) {
+                throw;
+            }
+            break;
+        case AttributeType::nmtoken:
+            // Default value must match Nmtoken.
+            if (ad.has_default_value && !valid_nmtoken(ad.default_value)) {
+                throw;
+            }
+            break;
+        case AttributeType::nmtokens:
+            // Default value must match Nmtokens.
+            if (ad.has_default_value && !valid_nmtokens(ad.default_value)) {
+                throw;
+            }
+            break;
+        case AttributeType::notation:
+            // Default value must be one of the notations in the enumeration list.
+            if (ad.has_default_value && !ad.notations.count(ad.default_value)) {
+                throw;
+            }
+            break;
+        case AttributeType::enumeration:
+            // Default value must be one of the enumeration values.
+            if (ad.has_default_value && !ad.enumeration.count(ad.default_value)) {
+                throw;
+            }
+            break;
+    }
+    // If the same attribute name is declared multiple times, only the first
+    // one counts.
+    if (!attlist.count(ad.name)) {
+        attlist[ad.name] = ad;
+    }
+}
 
+std::set<String> Parser::parse_enumerated_attribute(AttributeType att_type) {
+    std::set<String> values;
+    bool separator_next = false;
+    while (true) {
+        Char c = this->get();
+        if (is_whitespace(c)) {
+            operator++();
+            continue;
+        }
+        if (c == RIGHT_PARENTHESIS) {
+            if (!separator_next) {
+                // Cannot end on separator.
+                throw;
+            }
+            operator++();
+            break;
+        } else if (c == VERTICAL_BAR) {
+            if (!separator_next) {
+                throw;
+            }
+            operator++();
+            separator_next = false;
+        } else {
+            if (separator_next) {
+                throw;
+            }
+            separator_next = true;
+            // Notation -> Name, Enumeration -> NmToken
+            String value;
+            if (att_type == AttributeType::notation) {
+                value = this->parse_name(ENUMERATED_ATTRIBUTE_NAME_TERMINATORS);
+            } else {
+                value = this->parse_nmtoken(ENUMERATED_ATTRIBUTE_NAME_TERMINATORS);
+            }
+            if (values.count(value)) {
+                // Duplicate enumeration list values prohibited.
+                throw;
+            }
+            values.insert(value);
+        }
+    }
+    // An enumerated attribute list must not be empty.
+    if (values.empty()) {
+        throw;
+    }
+    return values;
+}
+
+std::set<String> Parser::parse_notations() {
+    return this->parse_enumerated_attribute(AttributeType::notation);
+}
+
+std::set<String> Parser::parse_enumeration() {
+    return this->parse_enumerated_attribute(AttributeType::enumeration);
 }
 
 void Parser::parse_notation_declaration(DoctypeDeclaration& dtd) {

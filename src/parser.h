@@ -13,6 +13,8 @@ class Parser {
     std::size_t pos = 0;
     std::size_t increment = 0;
     String parse_name(const String&, bool validate = true);
+    String parse_nmtoken(const String&);
+    String parse_attribute_value();
     std::pair<String, String> parse_attribute();
     Tag parse_tag();
     void parse_comment();
@@ -30,6 +32,9 @@ class Parser {
     MixedContentModel parse_mixed_content_model();
     void parse_attribute_list_declaration(DoctypeDeclaration&);
     void parse_attribute_declaration(AttributeListDeclaration&);
+    std::set<String> parse_enumerated_attribute(AttributeType);
+    std::set<String> parse_notations();
+    std::set<String> parse_enumeration();
     void parse_notation_declaration(DoctypeDeclaration&);
     Char get();
     Char peek();

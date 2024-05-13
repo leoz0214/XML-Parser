@@ -134,4 +134,64 @@ int main() {
         assert((!notations.at("n3").has_system_id));
         assert((notations.at("n3").public_id == String("Notation3")));
     });
+    test_document(R"(<?xml version='1.11' encoding='UTF-8'?>
+        <!--Attribute list declarations sanity check.-->
+        <!DOCTYPE root [
+            <!ATTLIST termdef
+                id      ID      #REQUIRED
+                name    CDATA   #IMPLIED>
+            <!ATTLIST  list type    ( bullets|ordered |glossary )  "ordered">
+            <!ATTLIST form method  CDATA   #FIXED 'POST' >
+        ]><root><!----></root>
+    )", [](const Document& document) {
+        auto attlists = document.doctype_declaration.attribute_list_declarations;
+        assert((attlists.size() == 3));
+        AttributeListDeclaration termdef = attlists.at("termdef");
+        assert((termdef.at("id").type == AttributeType::id));
+        assert((termdef.at("id").presence == AttributePresence::required));
+        assert((!termdef.at("id").has_default_value));
+        assert((termdef.at("name").type == AttributeType::cdata));
+        assert((termdef.at("name").presence == AttributePresence::implied));
+        assert((!termdef.at("name").has_default_value));
+        AttributeListDeclaration list = attlists.at("list");
+        assert((list.at("type").type == AttributeType::enumeration));
+        assert((list.at("type").enumeration.size() == 3));
+        assert((list.at("type").enumeration.count("glossary")));
+        assert((list.at("type").presence == AttributePresence::relaxed));
+        assert((list.at("type").default_value == String("ordered")));
+        AttributeListDeclaration form = attlists.at("form");
+        assert((form.at("method").presence == AttributePresence::fixed));
+        assert((form.at("method").default_value == String("POST")));
+    });
+    test_document(R"(<?xml version='1.00' encoding='utf-8'?>
+        <!--Attribute list declarations: more diverse checks-->
+        <!DOCTYPE root [
+            <!ATTLIST idrefs a IDREF 'idref' b IDREFS "a b c d e f g">
+            <!ATTLIST ents a ENTITY "entity" b ENTITIES 'h i j k l m'>
+            <!ATTLIST tokens a NMTOKEN '123' b NMTOKENS "1 2 3 4">
+            <!ATTLIST nota a NOTATION ( a | b | c ) #FIXED "c">
+        ]><root></root>
+    )", [](const Document& document) {
+        auto attlists = document.doctype_declaration.attribute_list_declarations;
+        AttributeListDeclaration idrefs = attlists.at("idrefs");
+        assert((idrefs.at("a").type == AttributeType::idref));
+        assert((idrefs.at("a").default_value == String("idref")));
+        assert((idrefs.at("b").type == AttributeType::idrefs));
+        assert((idrefs.at("b").default_value == String("a b c d e f g")));
+        AttributeListDeclaration ents = attlists.at("ents");
+        assert((ents.at("a").type == AttributeType::entity));
+        assert((ents.at("a").default_value == String("entity")));
+        assert((ents.at("b").type == AttributeType::entities));
+        assert((ents.at("b").default_value == String("h i j k l m")));
+        AttributeListDeclaration tokens = attlists.at("tokens");
+        assert((tokens.at("a").type == AttributeType::nmtoken));
+        assert((tokens.at("a").default_value == String("123")));
+        assert((tokens.at("b").type == AttributeType::nmtokens));
+        assert((tokens.at("b").default_value == String("1 2 3 4")));
+        AttributeListDeclaration nota = attlists.at("nota");
+        assert((nota.at("a").type == AttributeType::notation));
+        assert((nota.at("a").notations.size() == 3));
+        assert((nota.at("a").presence == AttributePresence::fixed));
+        assert((nota.at("a").default_value == String("c")));
+    });
 }

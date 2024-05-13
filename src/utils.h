@@ -43,10 +43,11 @@ constexpr char PLUS = '+';
 constexpr char COMMA = ',';
 constexpr char VERTICAL_BAR = '|';
 constexpr char OCTOTHORPE = '#';
+constexpr char SPACE = ' ';
 
 
 // Whitespace characters as per standard.
-static String WHITESPACE {0x20, 0x09, 0x0D, 0x0A};
+static String WHITESPACE {SPACE, 0x09, 0x0D, 0x0A};
 static String WHITESPACE_AND_RIGHT_ANGLE_BRACKET = []() {
     String valid_chars(WHITESPACE.begin(), WHITESPACE.end());
     valid_chars.push_back(TAG_CLOSE);
@@ -95,7 +96,13 @@ static CharacterRanges NAME_CHARACTER_RANGES = []() {
 }();
 bool valid_name_start_character(Char);
 bool valid_name_character(Char);
-bool valid_name(const String&);
+bool valid_name(const String&, bool check_all_chars = false);
+// DRY - validation of Names and Nmtokens very similar.
+bool valid_names_or_nmtokens(const String&, bool);
+// Restricted to attribute values only.
+bool valid_names(const String&);
+bool valid_nmtoken(const String&);
+bool valid_nmtokens(const String&);
 
 // Ensures attribute character is valid.
 static String INVALID_ATTRIBUTE_VALUE_CHARACTERS {TAG_OPEN, AMPERSAND};
@@ -221,16 +228,33 @@ static std::map<String, AttributeType> ATTRIBUTE_TYPES {
     {"NMTOKEN", AttributeType::nmtoken}, {"NMTOKENS", AttributeType::nmtokens},
     {"NOTATION", AttributeType::notation} // Note, enumerations detected from '('
 };
+// Required -> mandatory - no default, Implied -> optional - no default, 
+// Fixed -> constant value (default), Relaxed -> with default, can override
+enum class AttributePresence {required, implied, fixed, relaxed};
+static std::map<String, AttributePresence> ATTRIBUTE_PRESENCES {
+    {"REQUIRED", AttributePresence::required}, {"IMPLIED", AttributePresence::implied},
+    {"FIXED", AttributePresence::fixed}
+};
 struct AttributeDeclaration {
     String name;
     AttributeType type;
+    AttributePresence presence = AttributePresence::relaxed;
     // Only for notation attributes.
     std::set<String> notations;
     // Only for enumeration attributes.
-    std::set<String> enumerations;
+    std::set<String> enumeration;
+    // Default value handling.
+    bool has_default_value = false;
+    String default_value;
 };
 AttributeType get_attribute_type(const String&);
+AttributePresence get_attribute_presence(const String&);
 typedef std::map<String, AttributeDeclaration> AttributeListDeclaration;
+static String ENUMERATED_ATTRIBUTE_NAME_TERMINATORS = []() {
+    String valid_chars(WHITESPACE.begin(), WHITESPACE.end());
+    valid_chars.insert(valid_chars.end(), {VERTICAL_BAR, RIGHT_PARENTHESIS});
+    return valid_chars;
+}();
 
 // Notation handling.
 struct NotationDeclaration {

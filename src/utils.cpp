@@ -72,9 +72,19 @@ bool valid_name_character(Char c) {
         && c >= possible_range_it->first && c <= possible_range_it->second;
 }
 
-bool valid_name(const String& name) {
+bool valid_name(const String& name, bool check_all_chars) {
     if (name.empty()) {
         return false;
+    }
+    if (check_all_chars) {
+        // Only when not checking on-the-go should validating all characters occur.
+        // Such as an attribute value needing to be a valid Name.
+        if (!valid_name_start_character(name.front())) {
+            return false;
+        }
+        if (!std::all_of(name.cbegin() + 1, name.cend(), valid_name_character)) {
+            return false;
+        }
     }
     if (name.size() < 3) {
         return true;
@@ -82,6 +92,41 @@ bool valid_name(const String& name) {
     // Names starting with xml (case-insensitive) are reserved. Disallow.
     return !(std::tolower(name[0]) == 'x'
             && std::tolower(name[1]) == 'm' && std::tolower(name[2]) == 'l');
+}
+
+bool valid_names_or_nmtokens(const String& string, bool is_nmtokens) {
+    if (string.empty()) {
+        return false;
+    }
+    // Names/nmtokens separated by a space without any leading/trailing spaces.
+    String value;
+    for (Char c : string) {
+        if (c == SPACE) {
+            if (
+                (!is_nmtokens && !valid_name(value, true))
+                || (is_nmtokens && !valid_nmtoken(value))
+            ) {
+                return false;
+            }
+            value.clear();
+        } else {
+            value.push_back(c);
+        }
+    }
+    // Must not end on whitespace.
+    return !value.empty();
+}
+
+bool valid_names(const String& names) {
+    return valid_names_or_nmtokens(names, false);
+}
+
+bool valid_nmtoken(const String& nmtoken) {
+    return !nmtoken.empty() && std::all_of(nmtoken.cbegin(), nmtoken.cend(), valid_name_character);
+}
+
+bool valid_nmtokens(const String& nmtokens) {
+    return valid_names_or_nmtokens(nmtokens, true);
 }
 
 bool valid_attribute_value_character(Char c) {
@@ -133,6 +178,10 @@ bool valid_public_id_character(Char c) {
 
 AttributeType get_attribute_type(const String& string) {
     return ATTRIBUTE_TYPES.at(string);
+}
+
+AttributePresence get_attribute_presence(const String& string) {
+    return ATTRIBUTE_PRESENCES.at(string);
 }
 
 }
