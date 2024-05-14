@@ -15,6 +15,7 @@ class Parser {
     String parse_name(const String&, bool validate = true);
     String parse_nmtoken(const String&);
     String parse_attribute_value();
+    String parse_entity_value();
     std::pair<String, String> parse_attribute();
     Tag parse_tag();
     void parse_comment();
@@ -35,6 +36,9 @@ class Parser {
     std::set<String> parse_enumerated_attribute(AttributeType);
     std::set<String> parse_notations();
     std::set<String> parse_enumeration();
+    void parse_entity_declaration(DoctypeDeclaration&);
+    void parse_general_entity_declaration(DoctypeDeclaration&);
+    void parse_parameter_entity_declaration(DoctypeDeclaration&);
     void parse_notation_declaration(DoctypeDeclaration&);
     Char get();
     Char peek();

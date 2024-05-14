@@ -44,6 +44,7 @@ constexpr char COMMA = ',';
 constexpr char VERTICAL_BAR = '|';
 constexpr char OCTOTHORPE = '#';
 constexpr char SPACE = ' ';
+constexpr char PERCENT_SIGN = '%';
 
 
 // Whitespace characters as per standard.
@@ -256,6 +257,24 @@ static String ENUMERATED_ATTRIBUTE_NAME_TERMINATORS = []() {
     return valid_chars;
 }();
 
+// Entity handling - both general and parameter entities.
+struct Entity {
+    String name;
+    String value;
+    bool is_external = false;
+    // External entities only.
+    ExternalID external_id;
+};
+
+struct GeneralEntity : public Entity {
+    // General entities can also be unparsed.
+    bool is_unparsed = false;
+    String notation_name;
+};
+
+// Parameter entities have no extra attributes.
+struct ParameterEntity : public Entity {};
+
 // Notation handling.
 struct NotationDeclaration {
     String name;
@@ -274,6 +293,8 @@ struct DoctypeDeclaration {
     std::vector<ProcessingInstruction> processing_instructions;
     std::map<String, ElementDeclaration> element_declarations;
     std::map<String, AttributeListDeclaration> attribute_list_declarations;
+    std::map<String, GeneralEntity> general_entities;
+    std::map<String, ParameterEntity> parameter_entities;
     std::map<String, NotationDeclaration> notation_declarations;
 };
 // Characters which may signal end of root name in DTD.

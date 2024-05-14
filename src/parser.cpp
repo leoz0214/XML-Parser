@@ -97,6 +97,24 @@ String Parser::parse_attribute_value() {
     return value;
 }
 
+String Parser::parse_entity_value() {
+    Char quote = this->get();
+    if (quote != SINGLE_QUOTE && quote != DOUBLE_QUOTE) {
+        throw;
+    }
+    operator++();
+    String value;
+    while (true) {
+        Char c = this->get();
+        operator++();
+        if (c == quote) {
+            break;
+        }
+        value.push_back(c);
+    }
+    return value;
+}
+
 std::pair<String, String> Parser::parse_attribute() {
     String name = this->parse_name(ATTRIBUTE_NAME_TERMINATORS);
     // Ignore whitespace until '=' is reached.
@@ -525,7 +543,7 @@ void Parser::parse_markup_declaration(DoctypeDeclaration& dtd) {
     } else if (markup_declaration_type == String("ATTLIST")) {
         this->parse_attribute_list_declaration(dtd);
     } else if (markup_declaration_type == String("ENTITY")) {
-        // Entity declaration.
+        this->parse_entity_declaration(dtd);
     } else if (markup_declaration_type == String("NOTATION")) {
        this->parse_notation_declaration(dtd);
     } else {
@@ -858,6 +876,73 @@ std::set<String> Parser::parse_notations() {
 
 std::set<String> Parser::parse_enumeration() {
     return this->parse_enumerated_attribute(AttributeType::enumeration);
+}
+
+void Parser::parse_entity_declaration(DoctypeDeclaration& dtd) {
+    this->ignore_whitespace();
+    if (this->get() == PERCENT_SIGN) {
+        // Parameter entity. At least 1 whitespace must follow '%'.
+        operator++();
+        if (!is_whitespace(this->get())) {
+            throw;
+        }
+        this->ignore_whitespace();
+        this->parse_parameter_entity_declaration(dtd);
+    } else {
+        // General entity
+        this->parse_general_entity_declaration(dtd);
+    }
+    this->ignore_whitespace();
+    if (this->get() != RIGHT_ANGLE_BRACKET) {
+        throw;
+    }
+    operator++();
+}
+
+void Parser::parse_general_entity_declaration(DoctypeDeclaration& dtd) {
+    GeneralEntity ge;
+    ge.name = this->parse_name(WHITESPACE);
+    this->ignore_whitespace();
+    if (this->get() == SINGLE_QUOTE || this->get() == DOUBLE_QUOTE) {
+        // Has a literal value.
+        ge.value = this->parse_entity_value();
+    } else {
+        // External entity.
+        ge.is_external = true;
+        ge.external_id = this->parse_external_id();
+        this->ignore_whitespace();
+        if (this->get() != RIGHT_ANGLE_BRACKET) {
+            // Not done - must be NDATA indication otherwise invalid.
+            if (this->parse_name(WHITESPACE) != String("NDATA")) {
+                throw;
+            }
+            this->ignore_whitespace();
+            ge.is_unparsed = true;
+            ge.notation_name = this->parse_name(WHITESPACE_AND_RIGHT_ANGLE_BRACKET);
+        }
+    }
+    if (!dtd.general_entities.count(ge.name)) {
+        // Only count first instance of general entity declaration.
+        dtd.general_entities[ge.name] = ge;
+    }
+}
+
+void Parser::parse_parameter_entity_declaration(DoctypeDeclaration& dtd) {
+    ParameterEntity pe;
+    pe.name = this->parse_name(WHITESPACE);
+    this->ignore_whitespace();
+    if (this->get() == SINGLE_QUOTE || this->get() == DOUBLE_QUOTE) {
+        // Has a literal value.
+        pe.value = this->parse_entity_value();
+    } else {
+        // External entity.
+        pe.is_external = true;
+        pe.external_id = this->parse_external_id();
+    }
+    if (!dtd.parameter_entities.count(pe.name)) {
+        // Only count first instance of parameter entity declaration.
+        dtd.parameter_entities[pe.name] = pe;
+    }
 }
 
 void Parser::parse_notation_declaration(DoctypeDeclaration& dtd) {

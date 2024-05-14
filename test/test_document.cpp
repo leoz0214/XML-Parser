@@ -194,4 +194,51 @@ int main() {
         assert((nota.at("a").presence == AttributePresence::fixed));
         assert((nota.at("a").default_value == String("c")));
     });
+    test_document(R"(<!DOCTYPE root [
+        <!-- Testing General Entity Declarations -->
+        <!ENTITY g1 "value1">
+        <!ENTITY g1 "Dupe">
+        <!ENTITY      g2   'value"2"'   >
+        <!ENTITY open-hatch
+                SYSTEM "http://www.textuality.com/boilerplate/OpenHatch.xml">
+        <!ENTITY open-hatch2
+                PUBLIC "-//Textuality//TEXT Standard open-hatch boilerplate//EN"
+                "http://www.textuality.com/boilerplate/OpenHatch.xml">
+        <!ENTITY hatch-pic
+                SYSTEM "../grafix/OpenHatch.gif"
+                NDATA gif >
+    ]><root></root>
+    )", [](const Document& document) {
+        auto general_entities  = document.doctype_declaration.general_entities;
+        assert((general_entities.size() == 5));
+        assert((!general_entities.at("g1").is_external));
+        assert((!general_entities.at("g1").is_unparsed));
+        assert((general_entities.at("g1").value == String("value1")));
+        assert((general_entities.at("g2").value == String("value\"2\"")));
+        assert((general_entities.at("open-hatch").is_external));
+        assert((general_entities.at("open-hatch").external_id.type == ExternalIDType::system));
+        assert((general_entities.at("open-hatch2").is_external));
+        assert((general_entities.at("open-hatch2").external_id.type == ExternalIDType::public_));
+        assert((general_entities.at("hatch-pic").is_external));
+        assert((general_entities.at("hatch-pic").is_unparsed));
+        assert((general_entities.at("hatch-pic").notation_name == String("gif")));
+    });
+    test_document(R"(<!DOCTYPE root [
+        <!-- Testing Parameter Entity Declarations -->
+        <!ENTITY % p1 "value1">
+        <!ENTITY % p1 "Dupe">
+        <!ENTITY      %       p2        ''   >
+        <!ENTITY % ISOLat2
+                SYSTEM "http://www.xml.com/iso/isolat2-xml.entities" >
+    ]><root></root>
+    )", [](const Document& document) {
+        auto param_entities = document.doctype_declaration.parameter_entities;
+        assert((param_entities.size() == 3));
+        assert((param_entities.at("p1").value == String("value1")));
+        assert((param_entities.at("p2").value.empty()));
+        assert((param_entities.at("ISOLat2").is_external));
+        assert((param_entities.at("ISOLat2").external_id.type == ExternalIDType::system));
+        assert((param_entities.at("ISOLat2").external_id.system_id ==
+            String("http://www.xml.com/iso/isolat2-xml.entities")));
+    });
 }
