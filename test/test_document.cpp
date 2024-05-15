@@ -241,4 +241,21 @@ int main() {
         assert((param_entities.at("ISOLat2").external_id.system_id ==
             String("http://www.xml.com/iso/isolat2-xml.entities")));
     });
+    test_document(R"(<!DOCTYPE root [
+        <!-- Parameter Entity Usage Very Basic Test -->
+        <!ENTITY % att1 "<!ATTLIST a b CDATA '123'>">
+        <!-- Test -->
+        <!ELEMENT e EMPTY>
+            %att1;
+        <!ELEMENT f EMPTY>
+            %att1;
+            %att1;
+            %att1;
+    ]><root></root>
+    )", [](const Document& document) {
+        auto dtd = document.doctype_declaration;
+        assert((dtd.element_declarations.size() == 2));
+        assert((dtd.attribute_list_declarations.size() == 1));
+        assert((dtd.attribute_list_declarations.at("a").at("b").default_value == String("123")));
+    });
 }

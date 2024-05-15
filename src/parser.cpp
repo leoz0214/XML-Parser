@@ -8,10 +8,23 @@ Parser::Parser(const std::string& data) {
 }
 
 Char Parser::get() {
+    if (this->parameter_entity_active) {
+        return this->parameter_entity_text.at(this->parameter_entity_pos);
+    }
     if (this->eof()) {
         throw;
     }
     return parse_utf8(&this->data->at(pos), pos, this->data->size(), this->increment);
+}
+
+Char Parser::get(const ParameterEntities& parameter_entities) {
+    Char c = this->get();
+    if (c != PERCENT_SIGN) {
+        return c;
+    }
+    operator++();
+    this->parse_parameter_entity(parameter_entities);
+    return this->parameter_entity_text.at(0);
 }
 
 Char Parser::peek() {
@@ -24,6 +37,10 @@ Char Parser::peek() {
 }
 
 void Parser::operator++() {
+    if (this->parameter_entity_active) {
+        this->parameter_entity_pos++;
+        return;
+    }
     if (!this->increment) {
         this->get();
     }
@@ -32,6 +49,10 @@ void Parser::operator++() {
 
 bool Parser::eof() {
     return this->pos == this->data->size();
+}
+
+bool Parser::parameter_entity_eof() {
+    return this->parameter_entity_active && this->parameter_entity_pos == this->parameter_entity_text.size();
 }
 
 void Parser::ignore_whitespace() {
@@ -113,6 +134,30 @@ String Parser::parse_entity_value() {
         value.push_back(c);
     }
     return value;
+}
+
+void Parser::parse_parameter_entity(const ParameterEntities& parameter_entities) {
+    String name = "";
+    while (true) {
+        Char c = this->get();
+        operator++();
+        if (c == SEMI_COLON) {
+            break;
+        }
+        name.push_back(c);
+    }
+    if (!parameter_entities.count(name)) {
+        // Parameter entity name is not declared.
+        throw;
+    }
+    this->parameter_entity_text = parameter_entities.at(name).value;
+    this->parameter_entity_pos = 0;
+    this->parameter_entity_active = true;
+}
+
+void Parser::end_parameter_entity() {
+    this->parameter_entity_text.clear();
+    this->parameter_entity_active = false;
 }
 
 std::pair<String, String> Parser::parse_attribute() {
@@ -499,9 +544,15 @@ ExternalID Parser::parse_external_id() {
 
 void Parser::parse_internal_dtd_subset(DoctypeDeclaration& dtd) {
     while (true) {
-        Char c = this->get();
+        if (this->parameter_entity_eof()) {
+            this->end_parameter_entity();
+        }
+        Char c = this->get(dtd.parameter_entities);
         operator++();
         if (c == RIGHT_SQUARE_BRACKET) {
+            if (this->parameter_entity_active) {
+                throw;
+            }
             return;
         }
         if (is_whitespace(c)) {
@@ -510,7 +561,7 @@ void Parser::parse_internal_dtd_subset(DoctypeDeclaration& dtd) {
             // Must be exclamation mark or processing instruction or invalid.
             c = this->get();
             if (c != EXCLAMATION_MARK) {
-                if (c == QUESTION_MARK) {
+                if (c == QUESTION_MARK && !this->parameter_entity_active) {
                     operator++();
                     dtd.processing_instructions.push_back(this->parse_processing_instruction());
                     continue;
@@ -519,6 +570,9 @@ void Parser::parse_internal_dtd_subset(DoctypeDeclaration& dtd) {
             }
             operator++();
             if (this->get() == HYPHEN) {
+                if (this->parameter_entity_active) {
+                    throw;
+                }
                 // Comment or invalid.
                 operator++();
                 if (this->get() != HYPHEN) {

@@ -45,6 +45,7 @@ constexpr char VERTICAL_BAR = '|';
 constexpr char OCTOTHORPE = '#';
 constexpr char SPACE = ' ';
 constexpr char PERCENT_SIGN = '%';
+constexpr char SEMI_COLON = ';';
 
 
 // Whitespace characters as per standard.
@@ -286,6 +287,7 @@ struct NotationDeclaration {
 
 // Stores info about the DOCTYPE declaration, if any.
 // A DTD is optional - if not provided, assume zero restrictions on actual elements.
+typedef std::map<String, ParameterEntity> ParameterEntities;
 struct DoctypeDeclaration {
     bool exists = false;
     String root_name;
@@ -294,7 +296,7 @@ struct DoctypeDeclaration {
     std::map<String, ElementDeclaration> element_declarations;
     std::map<String, AttributeListDeclaration> attribute_list_declarations;
     std::map<String, GeneralEntity> general_entities;
-    std::map<String, ParameterEntity> parameter_entities;
+    ParameterEntities parameter_entities;
     std::map<String, NotationDeclaration> notation_declarations;
 };
 // Characters which may signal end of root name in DTD.
