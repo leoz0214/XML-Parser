@@ -52,7 +52,8 @@ bool Parser::eof() {
 }
 
 bool Parser::parameter_entity_eof() {
-    return this->parameter_entity_active && this->parameter_entity_pos == this->parameter_entity_text.size();
+    return this->parameter_entity_active &&
+        this->parameter_entity_pos == this->parameter_entity_text.size();
 }
 
 void Parser::ignore_whitespace() {
@@ -118,7 +119,7 @@ String Parser::parse_attribute_value() {
     return value;
 }
 
-String Parser::parse_entity_value() {
+String Parser::parse_entity_value(const DoctypeDeclaration& dtd) {
     Char quote = this->get();
     if (quote != SINGLE_QUOTE && quote != DOUBLE_QUOTE) {
         throw;
@@ -126,14 +127,102 @@ String Parser::parse_entity_value() {
     operator++();
     String value;
     while (true) {
-        Char c = this->get();
-        operator++();
-        if (c == quote) {
-            break;
+        Char c = this->get(dtd.parameter_entities);
+        if (this->parameter_entity_active) {
+            // Parse all parameter entity text.
+            while (true) {
+                value.push_back(c);
+                operator++();
+                if (this->parameter_entity_eof()) {
+                    this->end_parameter_entity();
+                    break;
+                }
+                c = this->get();
+            }
+        } else {
+            operator++();
+            if (c == AMPERSAND) {
+                // General/character entity.
+                if (this->get() == OCTOTHORPE) {
+                    // Character entity: &#...
+                    operator++();
+                    value.push_back(this->parse_character_entity());
+                } else {
+                    // General entity (bypass - store actual entity ref
+                    // in the value of current entity - not replacement text).
+                    value.push_back(AMPERSAND);
+                    for (Char c : this->parse_general_entity_name(dtd.general_entities)) {
+                        value.push_back(c);
+                    }
+                    value.push_back(SEMI_COLON);
+                }
+            } else {
+                if (c == quote) {
+                    break;
+                }
+                value.push_back(c);
+            }
         }
-        value.push_back(c);
     }
     return value;
+}
+
+Char Parser::parse_character_entity() {
+    Char c = this->get();
+    bool is_hex = c == 'x';
+    if (is_hex) {
+        operator++();
+        c = this->get();
+    }
+    if (c == SEMI_COLON) {
+        // Cannot be empty.
+        throw;
+    }
+    Char char_value = 0;
+    while (true) {
+        Char c = std::tolower(this->get());
+        operator++();
+        if (c == SEMI_COLON) {
+            break;
+        }
+        if (is_hex) {
+            if (!std::isxdigit(c)) {
+                throw;
+            }
+            int digit_value = c >= 'a' ? c - 'a' + 10 : c - '0';
+            char_value = char_value * 16 + digit_value;
+        } else {
+            if (!std::isdigit(c)) {
+                throw;
+            }
+            char_value = char_value * 10 + (c - '0');
+        }
+        // Sanity range check, avoiding overflow.
+        if (char_value > 2'000'000) {
+            throw;
+        }
+    }
+    if (!valid_character(char_value)) {
+        throw;
+    }
+    return char_value;
+}
+
+String Parser::parse_general_entity_name(const GeneralEntities& general_entities) {
+    String name = "";
+    while (true) {
+        Char c = this->get();
+        operator++();
+        if (c == SEMI_COLON) {
+            break;
+        }
+        name.push_back(c);
+    }
+    if (!general_entities.count(name)) {
+        // General entity name is not declared.
+        throw;
+    }
+    return name;
 }
 
 void Parser::parse_parameter_entity(const ParameterEntities& parameter_entities) {
@@ -566,11 +655,13 @@ void Parser::parse_internal_dtd_subset(DoctypeDeclaration& dtd) {
                     dtd.processing_instructions.push_back(this->parse_processing_instruction());
                     continue;
                 }
+                // Not processing instruction, or parameter entity active.
                 throw;
             }
             operator++();
             if (this->get() == HYPHEN) {
                 if (this->parameter_entity_active) {
+                    // Comment cannot be in parameter entity text.
                     throw;
                 }
                 // Comment or invalid.
@@ -959,7 +1050,7 @@ void Parser::parse_general_entity_declaration(DoctypeDeclaration& dtd) {
     this->ignore_whitespace();
     if (this->get() == SINGLE_QUOTE || this->get() == DOUBLE_QUOTE) {
         // Has a literal value.
-        ge.value = this->parse_entity_value();
+        ge.value = this->parse_entity_value(dtd);
     } else {
         // External entity.
         ge.is_external = true;
@@ -987,7 +1078,7 @@ void Parser::parse_parameter_entity_declaration(DoctypeDeclaration& dtd) {
     this->ignore_whitespace();
     if (this->get() == SINGLE_QUOTE || this->get() == DOUBLE_QUOTE) {
         // Has a literal value.
-        pe.value = this->parse_entity_value();
+        pe.value = this->parse_entity_value(dtd);
     } else {
         // External entity.
         pe.is_external = true;

@@ -243,7 +243,7 @@ int main() {
     });
     test_document(R"(<!DOCTYPE root [
         <!-- Parameter Entity Usage Very Basic Test -->
-        <!ENTITY % att1 "<!ATTLIST a b CDATA '123'>">
+        <!ENTITY % att1 " <!ATTLIST a b CDATA '123'> ">
         <!-- Test -->
         <!ELEMENT e EMPTY>
             %att1;
@@ -257,5 +257,33 @@ int main() {
         assert((dtd.element_declarations.size() == 2));
         assert((dtd.attribute_list_declarations.size() == 1));
         assert((dtd.attribute_list_declarations.at("a").at("b").default_value == String("123")));
+    });
+    test_document(R"(<!DOCTYPE root [
+        <!-- Parameter Entities in Entity Values TEST -->
+        <!ENTITY % a "1'2'3" >
+        <!ENTITY % b  "0'%a;'4">
+        <!ENTITY %  c '%b;'>
+        <!ENTITY a "Counting: %b;!">
+    ]><root></root>
+    )", [](const Document& document) {
+        auto parameter_entities = document.doctype_declaration.parameter_entities;
+        auto gen_entities = document.doctype_declaration.general_entities;
+        assert((parameter_entities.size() == 3));
+        assert((parameter_entities.at("a").value == String("1'2'3")));
+        assert((parameter_entities.at("b").value == String("0'1'2'3'4")));
+        assert((parameter_entities.at("c").value == String("0'1'2'3'4")));
+        assert((gen_entities.at("a").value == String("Counting: 0'1'2'3'4!")));
+    });
+    test_document(R"(<!DOCTYPE root [
+        <!-- Character/General REFERENCES in ENTITY VALUES -->
+        <!ENTITY x "a&#98;&#x63;d">
+        <!ENTITY % y  "&x;efg&#000104;">
+        <!ENTITY z '%y;ij&#x6B;'>
+    ]><root></root>
+    )", [](const Document& document) {
+        auto parameter_entities = document.doctype_declaration.parameter_entities;
+        auto gen_entities = document.doctype_declaration.general_entities;
+        assert((gen_entities.at("x").value == String("abcd")));
+        assert((gen_entities.at("z").value == String("&x;efghijk")));
     });
 }

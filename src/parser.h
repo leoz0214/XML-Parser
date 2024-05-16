@@ -19,7 +19,9 @@ class Parser {
     String parse_name(const String&, bool validate = true);
     String parse_nmtoken(const String&);
     String parse_attribute_value();
-    String parse_entity_value();
+    String parse_entity_value(const DoctypeDeclaration& dtd);
+    Char parse_character_entity();
+    String parse_general_entity_name(const GeneralEntities&);
     void parse_parameter_entity(const ParameterEntities&);
     void end_parameter_entity();
     std::pair<String, String> parse_attribute();

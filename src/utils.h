@@ -287,6 +287,7 @@ struct NotationDeclaration {
 
 // Stores info about the DOCTYPE declaration, if any.
 // A DTD is optional - if not provided, assume zero restrictions on actual elements.
+typedef std::map<String, GeneralEntity> GeneralEntities;
 typedef std::map<String, ParameterEntity> ParameterEntities;
 struct DoctypeDeclaration {
     bool exists = false;
@@ -295,7 +296,7 @@ struct DoctypeDeclaration {
     std::vector<ProcessingInstruction> processing_instructions;
     std::map<String, ElementDeclaration> element_declarations;
     std::map<String, AttributeListDeclaration> attribute_list_declarations;
-    std::map<String, GeneralEntity> general_entities;
+    GeneralEntities general_entities;
     ParameterEntities parameter_entities;
     std::map<String, NotationDeclaration> notation_declarations;
 };
