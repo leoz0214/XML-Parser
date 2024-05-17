@@ -286,4 +286,44 @@ int main() {
         assert((gen_entities.at("x").value == String("abcd")));
         assert((gen_entities.at("z").value == String("&x;efghijk")));
     });
+    test_document(R"(<!DOCTYPE countries [
+        <!-- Entities in attributes - test -->
+        <!ENTITY eur "E&#117;r">
+        <!ENTITY op 'op'>
+        <!ENTITY europ "&eur;&op;">
+        <!-- Testing recursive behaviour -->
+        <!ENTITY europe "&europ;e">
+        <!ENTITY asia "&#65;&#115;&#105;&#97;">
+        <!ENTITY africa 'Africa'>
+    ]>
+    <!-- Not-all continents included, just for demo-->
+    <countries continents="&europe; &asia; &africa;">
+        <country name="Ireland" continent="&europe;" capital="Dublin"/>
+        <country name="Japan" capital="Tokyo" continent="&asia;"/>
+        <country name="Egypt" continent="&africa;" capital="Cairo"/>
+    </countries>
+    )", [](const Document& document) {
+        Element root = document.root;
+        auto a = root.tag.attributes.at("continents");
+        assert((root.tag.attributes.at("continents") == String("Europe Asia Africa")));
+        assert((root.children.at(0).tag.attributes.at("continent") == String("Europe")));
+        assert((root.children.at(0).tag.attributes.at("name") == String("Ireland")));
+        assert((root.children.at(1).tag.attributes.at("continent") == String("Asia")));
+        assert((root.children.at(1).tag.attributes.at("capital") == String("Tokyo")));
+        assert((root.children.at(2).tag.attributes.at("continent") == String("Africa")));
+    });
+    test_document(R"(<!DOCTYPE root [
+        <!-- Entity reference ABUSE -->
+        <!ENTITY a "a">
+        <!ENTITY b "&a;&a;">
+        <!ENTITY c "&b;&b;&b;">
+        <!ENTITY d "&c;&c;&c;&c;">
+        <!ENTITY e "&d;&d;&d;&d;&d;">
+        <!ENTITY f "&e;&e;&e;&e;&e;&e;">
+        <!ENTITY g "&f;&f;&f;&f;&f;&f;&f;">
+        <!ENTITY h "&g;&g;&g;&g;&g;&g;&g;&g;">
+    ]><root att="&a;&b;&c;&d;&e;&f;&g;&h;"></root>)", [](const Document& document) {
+        assert((document.root.tag.attributes.at("att").size() ==
+            1 + 2 + 6 + 24 + 120 + 720 + 5040 + 40320));
+    });
 }

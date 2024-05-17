@@ -2,30 +2,46 @@
 #pragma once
 #include <string>
 #include <utility>
+#include <stack>
 #include <vector>
 #include "utils.h"
 
 
 namespace xml {
 
+struct GeneralEntityStream {
+    String text;
+    std::size_t pos = 0;
+    GeneralEntityStream(const String&);
+    Char get();
+    void operator++();
+    bool eof();
+};
+
+
 class Parser {
     const std::string* data;
     std::size_t pos = 0;
     std::size_t increment = 0;
+    // Mainly because recursive general entity references possible.
+    std::stack<GeneralEntityStream> general_entity_stack;
+    bool general_entity_active = false;
     String parameter_entity_text;
     std::size_t parameter_entity_pos = 0;
     bool parameter_entity_active = false;
 
     String parse_name(const String&, bool validate = true);
     String parse_nmtoken(const String&);
-    String parse_attribute_value();
-    String parse_entity_value(const DoctypeDeclaration& dtd);
+    String parse_attribute_value(const DoctypeDeclaration&);
+    String parse_entity_value(const DoctypeDeclaration&);
     Char parse_character_entity();
     String parse_general_entity_name(const GeneralEntities&);
+    void parse_general_entity(const GeneralEntities&);
+    void end_general_entity();
     void parse_parameter_entity(const ParameterEntities&);
     void end_parameter_entity();
-    std::pair<String, String> parse_attribute();
-    Tag parse_tag();
+    std::pair<String, String> parse_attribute(const DoctypeDeclaration&);
+    Tag parse_tag(const DoctypeDeclaration&);
     void parse_comment();
     String parse_cdata();
     ProcessingInstruction parse_processing_instruction(bool detect_xml_declaration = false);
@@ -40,7 +56,7 @@ class Parser {
     ElementContentModel parse_element_content_model();
     MixedContentModel parse_mixed_content_model();
     void parse_attribute_list_declaration(DoctypeDeclaration&);
-    void parse_attribute_declaration(AttributeListDeclaration&);
+    void parse_attribute_declaration(DoctypeDeclaration&, AttributeListDeclaration&);
     std::set<String> parse_enumerated_attribute(AttributeType);
     std::set<String> parse_notations();
     std::set<String> parse_enumeration();
@@ -49,15 +65,18 @@ class Parser {
     void parse_parameter_entity_declaration(DoctypeDeclaration&);
     void parse_notation_declaration(DoctypeDeclaration&);
     Char get();
+    Char get(const GeneralEntities&);
     Char get(const ParameterEntities&);
     Char peek();
     void operator++();
     bool eof();
+    bool general_entity_eof();
     bool parameter_entity_eof();
     void ignore_whitespace();
+    Element parse_element(const DoctypeDeclaration&, bool = false);
     public:
         Parser(const std::string&);
-        Element parse_element(bool = false);
+        Element parse_element();
         Document parse_document();
 };
 

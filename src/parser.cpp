@@ -3,11 +3,31 @@
 
 namespace xml {
 
+GeneralEntityStream::GeneralEntityStream(const String& text) {
+    this->text = text;
+}
+
+Char GeneralEntityStream::get() {
+    return this->text.at(this->pos);
+}
+
+void GeneralEntityStream::operator++() {
+    this->pos++;
+}
+
+bool GeneralEntityStream::eof() {
+    return this->pos >= this->text.size();
+}
+
+
 Parser::Parser(const std::string& data) {
     this->data = &data;
 }
 
 Char Parser::get() {
+    if (this->general_entity_active) {
+        return this->general_entity_stack.top().get();
+    }
     if (this->parameter_entity_active) {
         return this->parameter_entity_text.at(this->parameter_entity_pos);
     }
@@ -17,14 +37,28 @@ Char Parser::get() {
     return parse_utf8(&this->data->at(pos), pos, this->data->size(), this->increment);
 }
 
+Char Parser::get(const GeneralEntities& general_entities) {
+    Char c = this->get();
+    if (c == AMPERSAND) {
+        operator++();
+        if (this->get() == OCTOTHORPE) {
+            operator++();
+            return this->parse_character_entity();
+        }
+        this->parse_general_entity(general_entities);
+        return this->general_entity_stack.top().get();
+    }
+    return c;
+}
+
 Char Parser::get(const ParameterEntities& parameter_entities) {
     Char c = this->get();
-    if (c != PERCENT_SIGN) {
-        return c;
+    if (c == PERCENT_SIGN) {
+        operator++();
+        this->parse_parameter_entity(parameter_entities);
+        return this->parameter_entity_text.at(0);
     }
-    operator++();
-    this->parse_parameter_entity(parameter_entities);
-    return this->parameter_entity_text.at(0);
+    return c;
 }
 
 Char Parser::peek() {
@@ -37,6 +71,13 @@ Char Parser::peek() {
 }
 
 void Parser::operator++() {
+    if (this->general_entity_active) {
+        ++this->general_entity_stack.top();
+        if (this->general_entity_stack.top().eof() && this->general_entity_stack.size() > 1) {
+            this->general_entity_stack.pop();
+        }
+        return;
+    }
     if (this->parameter_entity_active) {
         this->parameter_entity_pos++;
         return;
@@ -49,6 +90,11 @@ void Parser::operator++() {
 
 bool Parser::eof() {
     return this->pos == this->data->size();
+}
+
+bool Parser::general_entity_eof() {
+    return this->general_entity_active && this->general_entity_stack.size() == 1
+        && this->general_entity_stack.top().eof();
 }
 
 bool Parser::parameter_entity_eof() {
@@ -97,7 +143,7 @@ String Parser::parse_nmtoken(const String& until) {
     return nmtoken;
 }
 
-String Parser::parse_attribute_value() {
+String Parser::parse_attribute_value(const DoctypeDeclaration& dtd) {
     // Ensure opening quote (double or single accepted).
     Char quote = this->get();
     if (quote != SINGLE_QUOTE && quote != DOUBLE_QUOTE) {
@@ -106,7 +152,24 @@ String Parser::parse_attribute_value() {
     operator++();
     String value;
     while (true) {
-        Char c = this->get();
+        Char c = this->get(dtd.general_entities);
+        if (this->general_entity_active) {
+            // Parse all general entity text.
+            while (true) {
+                // Ampersand means recursive entity reference.
+                // Only if not ampersand should character be added to value.
+                if (c != AMPERSAND) {
+                    value.push_back(c);
+                    operator++();
+                }
+                if (this->general_entity_eof()) {
+                    this->end_general_entity();
+                    break;
+                }
+                c = this->get(dtd.general_entities);
+            }
+            continue;
+        }
         operator++();
         if (c == quote) {
             break;
@@ -139,29 +202,29 @@ String Parser::parse_entity_value(const DoctypeDeclaration& dtd) {
                 }
                 c = this->get();
             }
-        } else {
-            operator++();
-            if (c == AMPERSAND) {
-                // General/character entity.
-                if (this->get() == OCTOTHORPE) {
-                    // Character entity: &#...
-                    operator++();
-                    value.push_back(this->parse_character_entity());
-                } else {
-                    // General entity (bypass - store actual entity ref
-                    // in the value of current entity - not replacement text).
-                    value.push_back(AMPERSAND);
-                    for (Char c : this->parse_general_entity_name(dtd.general_entities)) {
-                        value.push_back(c);
-                    }
-                    value.push_back(SEMI_COLON);
-                }
+            continue;
+        }
+        operator++();
+        if (c == AMPERSAND) {
+            // General/character entity.
+            if (this->get() == OCTOTHORPE) {
+                // Character entity: &#...
+                operator++();
+                value.push_back(this->parse_character_entity());
             } else {
-                if (c == quote) {
-                    break;
+                // General entity (bypass - store actual entity ref
+                // in the value of current entity - not replacement text).
+                value.push_back(AMPERSAND);
+                for (Char c : this->parse_general_entity_name(dtd.general_entities)) {
+                    value.push_back(c);
                 }
-                value.push_back(c);
+                value.push_back(SEMI_COLON);
             }
+        } else {
+            if (c == quote) {
+                break;
+            }
+            value.push_back(c);
         }
     }
     return value;
@@ -225,6 +288,20 @@ String Parser::parse_general_entity_name(const GeneralEntities& general_entities
     return name;
 }
 
+void Parser::parse_general_entity(const GeneralEntities& general_entities) {
+    String name = this->parse_general_entity_name(general_entities);
+    if (!general_entities.count(name)) {
+        throw;
+    }
+    this->general_entity_stack.push({general_entities.at(name).value});
+    this->general_entity_active = true;
+}
+
+void Parser::end_general_entity() {
+    this->general_entity_stack = {};
+    this->general_entity_active = false;
+}
+
 void Parser::parse_parameter_entity(const ParameterEntities& parameter_entities) {
     String name = "";
     while (true) {
@@ -249,7 +326,7 @@ void Parser::end_parameter_entity() {
     this->parameter_entity_active = false;
 }
 
-std::pair<String, String> Parser::parse_attribute() {
+std::pair<String, String> Parser::parse_attribute(const DoctypeDeclaration& dtd) {
     String name = this->parse_name(ATTRIBUTE_NAME_TERMINATORS);
     // Ignore whitespace until '=' is reached.
     while (this->get() != EQUAL) {
@@ -258,11 +335,11 @@ std::pair<String, String> Parser::parse_attribute() {
     // Increment the '='
     operator++();
     this->ignore_whitespace();
-    String value = this->parse_attribute_value();
+    String value = this->parse_attribute_value(dtd);
     return {name, value};
 }
 
-Tag Parser::parse_tag() {
+Tag Parser::parse_tag(const DoctypeDeclaration& dtd) {
     // Increment the '<'
     operator++();
     Tag tag;
@@ -306,7 +383,7 @@ Tag Parser::parse_tag() {
                 continue;
             }
             // Not end or whitespace, so must be an attribute.
-            std::pair<String, String> attribute = this->parse_attribute();
+            std::pair<String, String> attribute = this->parse_attribute(dtd);
             if (tag.attributes.count(attribute.first)) {
                 // Duplicate attribute names in same element prohibited.
                 throw;
@@ -399,8 +476,8 @@ ProcessingInstruction Parser::parse_processing_instruction(bool detect_xml_decla
     return pi;
 }
 
-Element Parser::parse_element(bool allow_end) {
-    Tag tag = this->parse_tag();
+Element Parser::parse_element(const DoctypeDeclaration& dtd, bool allow_end) {
+    Tag tag = this->parse_tag(dtd);
     Element element;
     element.tag = tag;
     switch (tag.type) {
@@ -471,7 +548,7 @@ Element Parser::parse_element(bool allow_end) {
                         break;
                     default:
                         // Must be child element or erroneous.
-                        Element child = this->parse_element(true);
+                        Element child = this->parse_element(dtd, true);
                         if (child.tag.type == TagType::end) {
                             // If closing tag same name, then element successfully closed.
                             if (child.tag.name != tag.name) {
@@ -508,6 +585,10 @@ Element Parser::parse_element(bool allow_end) {
     return element;
 }
 
+Element Parser::parse_element() {
+    return this->parse_element({});
+}
+
 void Parser::parse_xml_declaration(Document& document) {
     // Version must be specified.
     bool version_info_parsed = false;
@@ -529,7 +610,7 @@ void Parser::parse_xml_declaration(Document& document) {
             operator++();
             break;
         }
-        std::pair<String, String> attribute = this->parse_attribute();
+        std::pair<String, String> attribute = this->parse_attribute(document.doctype_declaration);
         if (attribute.first == XML_DECLARATION_VERSION_NAME) {
             String& version = attribute.second;
             if (!version_info_possible || !valid_version(version)) {
@@ -878,11 +959,11 @@ void Parser::parse_attribute_list_declaration(DoctypeDeclaration& dtd) {
             operator++();
             return;
         }
-        this->parse_attribute_declaration(dtd.attribute_list_declarations[element_name]);
+        this->parse_attribute_declaration(dtd, dtd.attribute_list_declarations[element_name]);
     }
 }
 
-void Parser::parse_attribute_declaration(AttributeListDeclaration& attlist) {
+void Parser::parse_attribute_declaration(DoctypeDeclaration& dtd, AttributeListDeclaration& attlist) {
     AttributeDeclaration ad;
     ad.name = this->parse_name(WHITESPACE);
     this->ignore_whitespace();
@@ -910,7 +991,7 @@ void Parser::parse_attribute_declaration(AttributeListDeclaration& attlist) {
     if (ad.presence == AttributePresence::fixed || ad.presence == AttributePresence::relaxed) {
         this->ignore_whitespace();
         ad.has_default_value = true;
-        ad.default_value = this->parse_attribute_value();
+        ad.default_value = this->parse_attribute_value(dtd);
     }
     // Perform suitable validation possible right now. Uses fallback switch technique.
     // Any attribute type not in the switch does not need validation at this time.
@@ -960,8 +1041,7 @@ void Parser::parse_attribute_declaration(AttributeListDeclaration& attlist) {
             }
             break;
     }
-    // If the same attribute name is declared multiple times, only the first
-    // one counts.
+    // If the same attribute name is declared multiple times, only the first one counts.
     if (!attlist.count(ad.name)) {
         attlist[ad.name] = ad;
     }
@@ -1238,7 +1318,7 @@ Document Parser::parse_document() {
                     throw;
                 }
                 root_seen = true;
-                document.root = this->parse_element();
+                document.root = this->parse_element(document.doctype_declaration);
         }
         xml_declaration_possible = false;
     }
