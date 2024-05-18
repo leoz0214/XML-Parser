@@ -25,6 +25,7 @@ Parser::Parser(const std::string& data) {
 }
 
 Char Parser::get() {
+    this->just_parsed_character_entity = false;
     if (this->general_entity_active) {
         return this->general_entity_stack.top().get();
     }
@@ -39,7 +40,7 @@ Char Parser::get() {
 
 Char Parser::get(const GeneralEntities& general_entities) {
     Char c = this->get();
-    if (c == AMPERSAND) {
+    if (c == AMPERSAND && !this->just_parsed_character_entity) {
         operator++();
         if (this->get() == OCTOTHORPE) {
             operator++();
@@ -158,9 +159,11 @@ String Parser::parse_attribute_value(const DoctypeDeclaration& dtd) {
             while (true) {
                 // Ampersand means recursive entity reference.
                 // Only if not ampersand should character be added to value.
-                if (c != AMPERSAND) {
+                if (c != AMPERSAND || this->just_parsed_character_entity) {
                     value.push_back(c);
-                    operator++();
+                    if (!this->just_parsed_character_entity) {
+                        operator++();
+                    }
                 }
                 if (this->general_entity_eof()) {
                     this->end_general_entity();
@@ -171,11 +174,13 @@ String Parser::parse_attribute_value(const DoctypeDeclaration& dtd) {
             continue;
         }
         operator++();
-        if (c == quote) {
-            break;
-        }
-        if (!valid_attribute_value_character(c)) {
-            throw;
+        if (!this->just_parsed_character_entity) {
+            if (c == quote) {
+                break;
+            }
+            if (!valid_attribute_value_character(c)) {
+                throw;
+            }
         }
         value.push_back(c);
     }
@@ -205,7 +210,7 @@ String Parser::parse_entity_value(const DoctypeDeclaration& dtd) {
             continue;
         }
         operator++();
-        if (c == AMPERSAND) {
+        if (c == AMPERSAND && !this->just_parsed_character_entity) {
             // General/character entity.
             if (this->get() == OCTOTHORPE) {
                 // Character entity: &#...
@@ -231,44 +236,17 @@ String Parser::parse_entity_value(const DoctypeDeclaration& dtd) {
 }
 
 Char Parser::parse_character_entity() {
-    Char c = this->get();
-    bool is_hex = c == 'x';
-    if (is_hex) {
-        operator++();
-        c = this->get();
-    }
-    if (c == SEMI_COLON) {
-        // Cannot be empty.
-        throw;
-    }
-    Char char_value = 0;
+    String string;
     while (true) {
-        Char c = std::tolower(this->get());
+        Char c = this->get();
         operator++();
+        string.push_back(c);
         if (c == SEMI_COLON) {
             break;
         }
-        if (is_hex) {
-            if (!std::isxdigit(c)) {
-                throw;
-            }
-            int digit_value = c >= 'a' ? c - 'a' + 10 : c - '0';
-            char_value = char_value * 16 + digit_value;
-        } else {
-            if (!std::isdigit(c)) {
-                throw;
-            }
-            char_value = char_value * 10 + (c - '0');
-        }
-        // Sanity range check, avoiding overflow.
-        if (char_value > 2'000'000) {
-            throw;
-        }
     }
-    if (!valid_character(char_value)) {
-        throw;
-    }
-    return char_value;
+    this->just_parsed_character_entity = true;
+    return xml::parse_character_entity(string);
 }
 
 String Parser::parse_general_entity_name(const GeneralEntities& general_entities) {
@@ -1144,6 +1122,20 @@ void Parser::parse_general_entity_declaration(DoctypeDeclaration& dtd) {
             this->ignore_whitespace();
             ge.is_unparsed = true;
             ge.notation_name = this->parse_name(WHITESPACE_AND_RIGHT_ANGLE_BRACKET);
+        }
+    }
+    if (BUILT_IN_GENERAL_ENTITIES.count(ge.name)) {
+        // If built-in entities are declared explictly, must match their actual value.
+        String expected = expand_character_entities(BUILT_IN_GENERAL_ENTITIES.at(ge.name).value);
+        String expansion = expand_character_entities(ge.value);
+        if (BUILT_IN_GENERAL_ENTITIES_MANDATORY_DOUBLE_ESCAPE.count(ge.name)) {
+            if (ge.value == expected || expansion != expected) {
+                throw;
+            }
+        } else {
+            if (ge.value != expected && expansion != expected) {
+                throw;
+            }
         }
     }
     if (!dtd.general_entities.count(ge.name)) {

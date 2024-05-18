@@ -29,6 +29,7 @@ class Parser {
     String parameter_entity_text;
     std::size_t parameter_entity_pos = 0;
     bool parameter_entity_active = false;
+    bool just_parsed_character_entity = false;
 
     String parse_name(const String&, bool validate = true);
     String parse_nmtoken(const String&);

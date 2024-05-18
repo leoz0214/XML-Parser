@@ -210,7 +210,7 @@ int main() {
     ]><root></root>
     )", [](const Document& document) {
         auto general_entities  = document.doctype_declaration.general_entities;
-        assert((general_entities.size() == 5));
+        assert((general_entities.size() == 5 + BUILT_IN_GENERAL_ENTITIES.size()));
         assert((!general_entities.at("g1").is_external));
         assert((!general_entities.at("g1").is_unparsed));
         assert((general_entities.at("g1").value == String("value1")));
@@ -325,5 +325,25 @@ int main() {
     ]><root att="&a;&b;&c;&d;&e;&f;&g;&h;"></root>)", [](const Document& document) {
         assert((document.root.tag.attributes.at("att").size() ==
             1 + 2 + 6 + 24 + 120 + 720 + 5040 + 40320));
+    });
+    std::cout << "Checkpoint\n";
+    test_document(R"(<!DOCTYPE root [
+        <!-- Taken straight from the standard. -->
+        <!ENTITY example "[&#38;#38;][&#38;#38;#38;][&amp;amp;]" >
+    ]><root att="&example;"></root>
+    )", [](const Document& document) {
+        assert((document.doctype_declaration.general_entities.at("example").value 
+            == String("[&#38;][&#38;#38;][&amp;amp;]")));
+        assert((document.root.tag.attributes.at("att") == String("[&][&#38;][&amp;]")));
+    });
+    test_document(R"(<!DOCTYPE root [
+        <!-- Testing explicit built-in entity declarations! -->
+        <!ENTITY lt "&#x26;#x03C;">
+        <!ENTITY gt '>'>
+        <!ENTITY amp "&#38;#38;">
+        <!ENTITY apos "&#39;">
+        <!ENTITY quot "&#000000000000000000034;">
+    ]><root all="&lt;&gt;&amp;&apos;&quot;"></root>)", [](const Document& document) {
+        assert((document.root.tag.attributes.at("all") == String("<>&'\"")));
     });
 }

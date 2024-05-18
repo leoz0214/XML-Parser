@@ -50,6 +50,10 @@ Char parse_utf8(const char* current_char, std::size_t pos, std::size_t len, std:
     return char_value;
 }
 
+GeneralEntity::GeneralEntity(const String& value) {
+    this->value = value;
+}
+
 bool is_whitespace(Char c) {
     return std::find(WHITESPACE.cbegin(), WHITESPACE.cend(), c) != WHITESPACE.cend();
 }
@@ -182,6 +186,68 @@ AttributeType get_attribute_type(const String& string) {
 
 AttributePresence get_attribute_presence(const String& string) {
     return ATTRIBUTE_PRESENCES.at(string);
+}
+
+Char parse_character_entity(const String& string) {
+    Char c = string.front();
+    std::size_t i = 0;
+    bool is_hex = c == 'x';
+    if (is_hex) {
+        c = string[++i];
+    }
+    if (c == SEMI_COLON) {
+        // Cannot be empty.
+        throw;
+    }
+    Char char_value = 0;
+    while (true) {
+        Char c = std::tolower(string[i++]);
+        if (c == SEMI_COLON) {
+            break;
+        }
+        if (is_hex) {
+            if (!std::isxdigit(c)) {
+                throw;
+            }
+            int digit_value = c >= 'a' ? c - 'a' + 10 : c - '0';
+            char_value = char_value * 16 + digit_value;
+        } else {
+            if (!std::isdigit(c)) {
+                throw;
+            }
+            char_value = char_value * 10 + (c - '0');
+        }
+        // Sanity range check, avoiding overflow.
+        if (char_value > 2'000'000) {
+            throw;
+        }
+    }
+    if (!valid_character(char_value)) {
+        throw;
+    }
+    return char_value;
+}
+
+String expand_character_entities(const String& string) {
+    String result;
+    for (std::size_t i = 0; i < string.size(); ++i) {
+        Char c = string.at(i);
+        if (c == AMPERSAND && string.at(i+1) == OCTOTHORPE) {
+            String char_entity;
+            i += 2;
+            while (true) {
+                c = string.at(i++);
+                char_entity.push_back(c);
+                if (c == SEMI_COLON) {
+                    break;
+                }
+            }
+            result.push_back(parse_character_entity(char_entity));
+        } else {
+            result.push_back(c);
+        }
+    }
+    return result;
 }
 
 }

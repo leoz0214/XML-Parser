@@ -267,10 +267,15 @@ struct Entity {
     ExternalID external_id;
 };
 
+Char parse_character_entity(const String&);
+String expand_character_entities(const String&);
+
 struct GeneralEntity : public Entity {
     // General entities can also be unparsed.
     bool is_unparsed = false;
     String notation_name;
+    GeneralEntity() = default;
+    GeneralEntity(const String&);
 };
 
 // Parameter entities have no extra attributes.
@@ -289,6 +294,11 @@ struct NotationDeclaration {
 // A DTD is optional - if not provided, assume zero restrictions on actual elements.
 typedef std::map<String, GeneralEntity> GeneralEntities;
 typedef std::map<String, ParameterEntity> ParameterEntities;
+static GeneralEntities BUILT_IN_GENERAL_ENTITIES {
+    {"lt", String("&#60;")}, {"gt", String("&#62;")}, {"amp", String("&#38;")},
+    {"apos", String("&#39;")}, {"quot", String("&#34;")}
+};
+static std::set<String> BUILT_IN_GENERAL_ENTITIES_MANDATORY_DOUBLE_ESCAPE {"lt", "amp"};
 struct DoctypeDeclaration {
     bool exists = false;
     String root_name;
@@ -296,7 +306,7 @@ struct DoctypeDeclaration {
     std::vector<ProcessingInstruction> processing_instructions;
     std::map<String, ElementDeclaration> element_declarations;
     std::map<String, AttributeListDeclaration> attribute_list_declarations;
-    GeneralEntities general_entities;
+    GeneralEntities general_entities = BUILT_IN_GENERAL_ENTITIES;
     ParameterEntities parameter_entities;
     std::map<String, NotationDeclaration> notation_declarations;
 };
