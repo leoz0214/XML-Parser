@@ -46,10 +46,11 @@ constexpr char OCTOTHORPE = '#';
 constexpr char SPACE = ' ';
 constexpr char PERCENT_SIGN = '%';
 constexpr char SEMI_COLON = ';';
-
+constexpr char CARRIAGE_RETURN = 0x0D;
+constexpr char LINE_FEED = 0x0A;
 
 // Whitespace characters as per standard.
-static String WHITESPACE {SPACE, 0x09, 0x0D, 0x0A};
+static String WHITESPACE {SPACE, 0x09, CARRIAGE_RETURN, LINE_FEED};
 static String WHITESPACE_AND_RIGHT_ANGLE_BRACKET = []() {
     String valid_chars(WHITESPACE.begin(), WHITESPACE.end());
     valid_chars.push_back(TAG_CLOSE);

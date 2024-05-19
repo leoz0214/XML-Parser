@@ -1,21 +1,20 @@
 #include "parser.h"
 
-
 namespace xml {
 
-GeneralEntityStream::GeneralEntityStream(const String& text) {
+EntityStream::EntityStream(const String& text) {
     this->text = text;
 }
 
-Char GeneralEntityStream::get() {
+Char EntityStream::get() {
     return this->text.at(this->pos);
 }
 
-void GeneralEntityStream::operator++() {
+void EntityStream::operator++() {
     this->pos++;
 }
 
-bool GeneralEntityStream::eof() {
+bool EntityStream::eof() {
     return this->pos >= this->text.size();
 }
 
@@ -26,16 +25,27 @@ Parser::Parser(const std::string& data) {
 
 Char Parser::get() {
     this->just_parsed_character_entity = false;
+    bool just_parsed_carriage_return = this->just_parsed_carriage_return;
+    this->just_parsed_carriage_return = false;
     if (this->general_entity_active) {
         return this->general_entity_stack.top().get();
     }
     if (this->parameter_entity_active) {
-        return this->parameter_entity_text.at(this->parameter_entity_pos);
+        return this->parameter_entity_stack.top().get();
     }
     if (this->eof()) {
         throw;
     }
-    return parse_utf8(&this->data->at(pos), pos, this->data->size(), this->increment);
+    Char c = parse_utf8(&this->data->at(pos), pos, this->data->size(), this->increment);
+    if (c == LINE_FEED && just_parsed_carriage_return) {
+        operator++();
+        return this->get();
+    }
+    this->just_parsed_carriage_return = c == CARRIAGE_RETURN;
+    if (this->just_parsed_carriage_return) {
+        return LINE_FEED;
+    }
+    return c;
 }
 
 Char Parser::get(const GeneralEntities& general_entities) {
@@ -54,10 +64,10 @@ Char Parser::get(const GeneralEntities& general_entities) {
 
 Char Parser::get(const ParameterEntities& parameter_entities) {
     Char c = this->get();
-    if (c == PERCENT_SIGN) {
+    if (c == PERCENT_SIGN && !this->just_parsed_character_entity) {
         operator++();
         this->parse_parameter_entity(parameter_entities);
-        return this->parameter_entity_text.at(0);
+        return this->parameter_entity_stack.top().get();
     }
     return c;
 }
@@ -80,7 +90,10 @@ void Parser::operator++() {
         return;
     }
     if (this->parameter_entity_active) {
-        this->parameter_entity_pos++;
+        ++this->parameter_entity_stack.top();
+        if (this->parameter_entity_stack.top().eof() && this->parameter_entity_stack.size() > 1) {
+            this->parameter_entity_stack.pop();
+        }
         return;
     }
     if (!this->increment) {
@@ -99,8 +112,8 @@ bool Parser::general_entity_eof() {
 }
 
 bool Parser::parameter_entity_eof() {
-    return this->parameter_entity_active &&
-        this->parameter_entity_pos == this->parameter_entity_text.size();
+    return this->parameter_entity_active && this->parameter_entity_stack.size() == 1
+        && this->parameter_entity_stack.top().eof();
 }
 
 void Parser::ignore_whitespace() {
@@ -195,15 +208,23 @@ String Parser::parse_entity_value(const DoctypeDeclaration& dtd) {
     operator++();
     String value;
     while (true) {
+        int before_parameter_entity_stack_size = this->parameter_entity_stack.size();
         Char c = this->get(dtd.parameter_entities);
-        if (this->parameter_entity_active) {
+        int after_parameter_entity_stack_size = this->parameter_entity_stack.size();
+        if (after_parameter_entity_stack_size > before_parameter_entity_stack_size) {
             // Parse all parameter entity text.
             while (true) {
                 value.push_back(c);
                 operator++();
-                if (this->parameter_entity_eof()) {
-                    this->end_parameter_entity();
-                    break;
+                if (before_parameter_entity_stack_size == 0) {
+                    if (this->parameter_entity_eof()) {
+                        this->end_parameter_entity();
+                        break;
+                    }
+                } else {
+                    if (this->parameter_entity_stack.size() == before_parameter_entity_stack_size) {
+                        break;
+                    }
                 }
                 c = this->get();
             }
@@ -294,13 +315,12 @@ void Parser::parse_parameter_entity(const ParameterEntities& parameter_entities)
         // Parameter entity name is not declared.
         throw;
     }
-    this->parameter_entity_text = parameter_entities.at(name).value;
-    this->parameter_entity_pos = 0;
+    this->parameter_entity_stack.push({parameter_entities.at(name).value});
     this->parameter_entity_active = true;
 }
 
 void Parser::end_parameter_entity() {
-    this->parameter_entity_text.clear();
+    this->parameter_entity_stack = {};
     this->parameter_entity_active = false;
 }
 
@@ -696,6 +716,9 @@ void Parser::parse_internal_dtd_subset(DoctypeDeclaration& dtd) {
             this->end_parameter_entity();
         }
         Char c = this->get(dtd.parameter_entities);
+        while (c == PERCENT_SIGN) {
+            c = this->get(dtd.parameter_entities);
+        }
         operator++();
         if (c == RIGHT_SQUARE_BRACKET) {
             if (this->parameter_entity_active) {

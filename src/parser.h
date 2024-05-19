@@ -9,10 +9,10 @@
 
 namespace xml {
 
-struct GeneralEntityStream {
+struct EntityStream {
     String text;
     std::size_t pos = 0;
-    GeneralEntityStream(const String&);
+    EntityStream(const String&);
     Char get();
     void operator++();
     bool eof();
@@ -23,13 +23,14 @@ class Parser {
     const std::string* data;
     std::size_t pos = 0;
     std::size_t increment = 0;
-    // Mainly because recursive general entity references possible.
-    std::stack<GeneralEntityStream> general_entity_stack;
+    // Mainly because recursive entity references possible.
+    std::stack<EntityStream> general_entity_stack;
+    std::stack<EntityStream> parameter_entity_stack;
     bool general_entity_active = false;
-    String parameter_entity_text;
     std::size_t parameter_entity_pos = 0;
-    bool parameter_entity_active = false;
     bool just_parsed_character_entity = false;
+    bool parameter_entity_active = false;
+    bool just_parsed_carriage_return = false;
 
     String parse_name(const String&, bool validate = true);
     String parse_nmtoken(const String&);

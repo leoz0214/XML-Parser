@@ -346,4 +346,14 @@ int main() {
     ]><root all="&lt;&gt;&amp;&apos;&quot;"></root>)", [](const Document& document) {
         assert((document.root.tag.attributes.at("all") == String("<>&'\"")));
     });
+    test_document(R"(<?xml version='1.0'?>
+        <!DOCTYPE test [
+        <!ELEMENT test (#PCDATA) >
+        <!ENTITY % xx '&#37;zz;'>
+        <!ENTITY % zz '&#60;!ENTITY tricky "error-prone" >' >
+    %xx;]><test att="This sample shows a &tricky; method."></test>
+    )", [](const Document& document) {
+        assert((document.root.tag.attributes.at("att")
+            == String("This sample shows a error-prone method.")));
+    });
 }
