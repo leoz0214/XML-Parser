@@ -1,6 +1,7 @@
 #include "utils.h"
 #include <string>
 #include <cstring>
+#include <string_view>
 
 
 namespace xml {
@@ -13,6 +14,10 @@ String::String(const char* string) {
         this->push_back(parse_utf8(string + pos, pos, len, bytes_read));
         pos += bytes_read;
     }
+}
+
+std::ostream& operator<<(std::ostream& output, const String& string) {
+    return output << std::string(string.begin(), string.end());
 }
 
 Char parse_utf8(const char* current_char, std::size_t pos, std::size_t len, std::size_t& bytes_read) {

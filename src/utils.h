@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <initializer_list>
 #include <map>
+#include <ostream>
 #include <set>
 #include <string>
 #include <utility>
@@ -16,6 +17,7 @@ class String : public std::vector<Char> {
     public:
         using std::vector<Char>::vector;
         String(const char*);
+        friend std::ostream& operator<<(std::ostream&, const String&);
 };
 // Parses a UTF-8 character
 // from a given start byte, at a given offset, out of a total string size.

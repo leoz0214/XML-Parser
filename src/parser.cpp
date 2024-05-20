@@ -1,5 +1,6 @@
 #include "parser.h"
 
+
 namespace xml {
 
 EntityStream::EntityStream(const String& text) {
@@ -70,15 +71,6 @@ Char Parser::get(const ParameterEntities& parameter_entities) {
         return this->parameter_entity_stack.top().get();
     }
     return c;
-}
-
-Char Parser::peek() {
-    std::size_t current_increment = this->increment;
-    operator++();
-    Char next_char = this->get();
-    this->pos -= current_increment;
-    this->increment = current_increment;
-    return next_char;
 }
 
 void Parser::operator++() {
@@ -168,25 +160,19 @@ String Parser::parse_attribute_value(const DoctypeDeclaration& dtd) {
     while (true) {
         Char c = this->get(dtd.general_entities);
         if (this->general_entity_active) {
-            // Parse all general entity text.
-            while (true) {
-                // Ampersand means recursive entity reference.
-                // Only if not ampersand should character be added to value.
-                if (c != AMPERSAND || this->just_parsed_character_entity) {
+            // Parse all general entity text and normalise whitespace.
+            for (Char c : this->parse_general_entity_text(dtd.general_entities)) {
+                if (is_whitespace(c)) {
+                    value.push_back(SPACE);
+                } else {
                     value.push_back(c);
-                    if (!this->just_parsed_character_entity) {
-                        operator++();
-                    }
                 }
-                if (this->general_entity_eof()) {
-                    this->end_general_entity();
-                    break;
-                }
-                c = this->get(dtd.general_entities);
             }
             continue;
         }
-        operator++();
+        if (!just_parsed_character_entity) {
+            operator++();
+        }
         if (!this->just_parsed_character_entity) {
             if (c == quote) {
                 break;
@@ -195,7 +181,12 @@ String Parser::parse_attribute_value(const DoctypeDeclaration& dtd) {
                 throw;
             }
         }
-        value.push_back(c);
+        if (is_whitespace(c) && !this->just_parsed_character_entity) {
+            // All literal whitespace that is not char reference becomes space.
+            value.push_back(SPACE);
+        } else {
+            value.push_back(c);
+        }
     }
     return value;
 }
@@ -296,6 +287,26 @@ void Parser::parse_general_entity(const GeneralEntities& general_entities) {
     this->general_entity_active = true;
 }
 
+String Parser::parse_general_entity_text(const GeneralEntities& general_entities) {
+    String text;
+    while (true) {
+        // Ampersand means recursive entity reference.
+        // Only if not ampersand should character be added to value.
+        Char c = this->get(general_entities);
+        if (c != AMPERSAND || this->just_parsed_character_entity) {
+            text.push_back(c);
+            if (!this->just_parsed_character_entity) {
+                operator++();
+            }
+        }
+        if (this->general_entity_eof()) {
+            this->end_general_entity();
+            break;
+        }
+    }
+    return text;
+}
+
 void Parser::end_general_entity() {
     this->general_entity_stack = {};
     this->general_entity_active = false;
@@ -338,8 +349,6 @@ std::pair<String, String> Parser::parse_attribute(const DoctypeDeclaration& dtd)
 }
 
 Tag Parser::parse_tag(const DoctypeDeclaration& dtd) {
-    // Increment the '<'
-    operator++();
     Tag tag;
     if (this->get() == SOLIDUS) {
         // End tag.
@@ -496,17 +505,33 @@ Element Parser::parse_element(const DoctypeDeclaration& dtd, bool allow_end) {
     while (true) {
         Char c = this->get();
         switch (c) {
-            case AMPERSAND:
-                throw;
+            case AMPERSAND: {
+                // Reference.
+                // Flush current character data to overall text.
+                element.text.reserve(element.text.size() + char_data.size());
+                element.text.insert(element.text.end(), char_data.begin(), char_data.end());
+                char_data.clear();
+                Char c = this->get(dtd.general_entities);
+                if (this->general_entity_active) {
+                    // General entity reference.
+                    for (Char c : this->parse_general_entity_text(dtd.general_entities)) {
+                        element.text.push_back(c);
+                    }
+                } else {
+                    // Character reference.
+                    element.text.push_back(c);
+                }
+                break;
+            }
             case LEFT_ANGLE_BRACKET: {
                 // Flush current character data to overall text.
                 element.text.reserve(element.text.size() + char_data.size());
                 element.text.insert(element.text.end(), char_data.begin(), char_data.end());
                 char_data.clear();
-                switch (this->peek()) {
+                operator++();
+                switch (this->get()) {
                     case EXCLAMATION_MARK:
                         // Comment or CDATA section.
-                        operator++();
                         operator++();
                         switch (this->get()) {
                             case HYPHEN:
@@ -540,7 +565,6 @@ Element Parser::parse_element(const DoctypeDeclaration& dtd, bool allow_end) {
                         break;
                     case QUESTION_MARK:
                         // Processing instruction.
-                        operator++();
                         operator++();
                         element.processing_instructions.push_back(this->parse_processing_instruction());
                         break;
@@ -1281,10 +1305,10 @@ Document Parser::parse_document() {
         if (c != LEFT_ANGLE_BRACKET) {
             throw;
         }
-        switch (this->peek()) {
+        operator++();
+        switch (this->get()) {
             case QUESTION_MARK: {
                 // XML declaration or processing instruction.
-                operator++();
                 operator++();
                 ProcessingInstruction pi = this->parse_processing_instruction(xml_declaration_possible);
                 if (pi.target == String("xml")) {
@@ -1297,7 +1321,6 @@ Document Parser::parse_document() {
             }
             case EXCLAMATION_MARK:
                 // Document type definition or comment.
-                operator++();
                 operator++();
                 if (this->get() == '-') {
                     // Hints a comment - need to check further: <!--.

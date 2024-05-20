@@ -39,6 +39,7 @@ class Parser {
     Char parse_character_entity();
     String parse_general_entity_name(const GeneralEntities&);
     void parse_general_entity(const GeneralEntities&);
+    String parse_general_entity_text(const GeneralEntities&);
     void end_general_entity();
     void parse_parameter_entity(const ParameterEntities&);
     void end_parameter_entity();
@@ -69,7 +70,6 @@ class Parser {
     Char get();
     Char get(const GeneralEntities&);
     Char get(const ParameterEntities&);
-    Char peek();
     void operator++();
     bool eof();
     bool general_entity_eof();

@@ -356,4 +356,49 @@ int main() {
         assert((document.root.tag.attributes.at("att")
             == String("This sample shows a error-prone method.")));
     });
+    test_document(R"(
+        <!DOCTYPE root [
+            <!ENTITY d "&#xD;">
+            <!ENTITY a "&#xA;">
+            <!ENTITY da "&#xD;&#xA;">
+            <!ENTITY t '&#9;'>
+        ]><root a="
+
+xyz" b="&d;&d;A&a;&#x20;&a;B&da;" c="&#xd;&#xd;A&#xa;&#xa;B&#xd;&#xa;&t;&t;"></root>
+    )", [](const Document& document) {
+        auto& attributes = document.root.tag.attributes;
+        assert((attributes.at("a") == String("  xyz")));
+        assert((attributes.at("b") == String("  A   B  ")));
+        assert((attributes.at("c") == String("\r\rA\n\nB\r\n  ")));
+    });
+    test_document(R"(<?xml version="1.0" encoding="utf-8"?>
+        <!DOCTYPE activities [
+            <!-- If this document is correctly parsed,
+                most 'normal' XML docs should pass with this parser! -->
+            <!ENTITY morning 'Morning'><!ENTITY afternoon "Aftern&#111;&#111;n">
+            <!ENTITY evening "Evening"><!ENTITY night "Night"><!ENTITY run "Run">
+        ]>
+        <activities count='4' userId="123456" settings="43&amp;54&amp;&amp;25">
+            <activity id="8888" distance="5.44">&afternoon; <!-- -->&run;</activity>
+            <activity id="1234" distance="6.46">&night;&#x020;&#0074;og</activity>
+            <activity id="0000" distance="7.77">Wet &amp; Fun &run;&lt;</activity>
+            <activity id="2323" distance="9.99">Dry<![CDATA[ & Boring Run<]]>></activity>
+        </activities>
+    )", [](const Document& document) {
+        Tag root = document.root.tag;
+        assert((root.attributes.at("count") == String("4")));
+        assert((root.attributes.at("userId") == String("123456")));
+        assert((root.attributes.at("settings") == String("43&54&&25")));
+        std::vector<Element> activities = document.root.children;
+        std::vector<String> ids {"8888", "1234", "0000", "2323"};
+        std::vector<String> distances {"5.44", "6.46", "7.77", "9.99"};
+        std::vector<String> titles {"Afternoon Run", "Night Jog", "Wet & Fun Run<", "Dry & Boring Run<>"};
+        assert((activities.size() == 4));
+        for (int i = 0; i < 4; ++i) {
+            Element activity = activities[i];
+            assert((activity.tag.attributes.at("id") == ids[i]));
+            assert((activity.tag.attributes.at("distance") == distances[i]));
+            assert((activity.text == titles[i]));
+        }
+    });
 }
