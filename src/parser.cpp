@@ -1,5 +1,5 @@
 #include "parser.h"
-
+#include <iostream>
 
 namespace xml {
 
@@ -25,7 +25,7 @@ Parser::Parser(const std::string& data) {
 }
 
 Char Parser::get() {
-    this->just_parsed_character_entity = false;
+    this->just_parsed_character_reference = false;
     bool just_parsed_carriage_return = this->just_parsed_carriage_return;
     this->just_parsed_carriage_return = false;
     if (this->general_entity_active) {
@@ -51,7 +51,7 @@ Char Parser::get() {
 
 Char Parser::get(const GeneralEntities& general_entities) {
     Char c = this->get();
-    if (c == AMPERSAND && !this->just_parsed_character_entity) {
+    if (c == AMPERSAND && !this->just_parsed_character_reference) {
         operator++();
         if (this->get() == OCTOTHORPE) {
             operator++();
@@ -65,7 +65,7 @@ Char Parser::get(const GeneralEntities& general_entities) {
 
 Char Parser::get(const ParameterEntities& parameter_entities) {
     Char c = this->get();
-    if (c == PERCENT_SIGN && !this->just_parsed_character_entity) {
+    if (c == PERCENT_SIGN && !this->just_parsed_character_reference) {
         operator++();
         this->parse_parameter_entity(parameter_entities);
         return this->parameter_entity_stack.top().get();
@@ -157,23 +157,28 @@ String Parser::parse_attribute_value(const DoctypeDeclaration& dtd) {
     }
     operator++();
     String value;
+    int general_entity_stack_size_before = this->general_entity_stack.size();
     while (true) {
         Char c = this->get(dtd.general_entities);
-        if (this->general_entity_active) {
+        if (this->general_entity_stack.size() > general_entity_stack_size_before) {
             // Parse all general entity text and normalise whitespace.
-            for (Char c : this->parse_general_entity_text(dtd.general_entities)) {
+            this->parse_general_entity_text(dtd.general_entities, [&value, this](Char c) {
+                // Included in literal - ignore quotes but disallow < still for example.
+                if (!this->just_parsed_character_reference && !valid_attribute_value_character(c)) {
+                    throw;
+                }
                 if (is_whitespace(c)) {
                     value.push_back(SPACE);
                 } else {
                     value.push_back(c);
-                }
-            }
+                }             
+            }, general_entity_stack_size_before);
             continue;
         }
-        if (!just_parsed_character_entity) {
+        if (!just_parsed_character_reference) {
             operator++();
         }
-        if (!this->just_parsed_character_entity) {
+        if (!this->just_parsed_character_reference) {
             if (c == quote) {
                 break;
             }
@@ -181,7 +186,7 @@ String Parser::parse_attribute_value(const DoctypeDeclaration& dtd) {
                 throw;
             }
         }
-        if (is_whitespace(c) && !this->just_parsed_character_entity) {
+        if (is_whitespace(c) && !this->just_parsed_character_reference) {
             // All literal whitespace that is not char reference becomes space.
             value.push_back(SPACE);
         } else {
@@ -222,7 +227,7 @@ String Parser::parse_entity_value(const DoctypeDeclaration& dtd) {
             continue;
         }
         operator++();
-        if (c == AMPERSAND && !this->just_parsed_character_entity) {
+        if (c == AMPERSAND && !this->just_parsed_character_reference) {
             // General/character entity.
             if (this->get() == OCTOTHORPE) {
                 // Character entity: &#...
@@ -257,7 +262,7 @@ Char Parser::parse_character_entity() {
             break;
         }
     }
-    this->just_parsed_character_entity = true;
+    this->just_parsed_character_reference = true;
     return xml::parse_character_entity(string);
 }
 
@@ -287,20 +292,28 @@ void Parser::parse_general_entity(const GeneralEntities& general_entities) {
     this->general_entity_active = true;
 }
 
-String Parser::parse_general_entity_text(const GeneralEntities& general_entities) {
+String Parser::parse_general_entity_text(
+    const GeneralEntities& general_entities, std::function<void(Char)> func,
+    int original_depth
+) {
     String text;
     while (true) {
         // Ampersand means recursive entity reference.
         // Only if not ampersand should character be added to value.
         Char c = this->get(general_entities);
-        if (c != AMPERSAND || this->just_parsed_character_entity) {
-            text.push_back(c);
-            if (!this->just_parsed_character_entity) {
+        if (c != AMPERSAND || this->just_parsed_character_reference) {
+            func(c);
+            if (!this->just_parsed_character_reference) {
                 operator++();
             }
         }
-        if (this->general_entity_eof()) {
-            this->end_general_entity();
+        if (
+            this->general_entity_stack.size() == original_depth + 1
+            && this->general_entity_stack.top().eof()
+        ) {
+            if (this->general_entity_eof()) {
+                this->end_general_entity();
+            }
             break;
         }
     }
@@ -502,27 +515,26 @@ Element Parser::parse_element(const DoctypeDeclaration& dtd, bool allow_end) {
     }
     // Process normal element after start tag seen.
     String char_data;
+    int general_entity_stack_size_before = this->general_entity_stack.size();
     while (true) {
-        Char c = this->get();
-        switch (c) {
-            case AMPERSAND: {
-                // Reference.
-                // Flush current character data to overall text.
-                element.text.reserve(element.text.size() + char_data.size());
-                element.text.insert(element.text.end(), char_data.begin(), char_data.end());
-                char_data.clear();
-                Char c = this->get(dtd.general_entities);
-                if (this->general_entity_active) {
-                    // General entity reference.
-                    for (Char c : this->parse_general_entity_text(dtd.general_entities)) {
-                        element.text.push_back(c);
-                    }
-                } else {
-                    // Character reference.
-                    element.text.push_back(c);
-                }
-                break;
+        if (this->general_entity_eof()) {
+            this->end_general_entity();
+        }
+        Char c = this->get(dtd.general_entities);
+        if (this->general_entity_active) {
+            while (c == AMPERSAND && !this->just_parsed_character_reference) {
+                c = this->get(dtd.general_entities);
             }
+        }
+        if (this->just_parsed_character_reference) {
+            // Escaped character - part of character data.
+            element.text.reserve(element.text.size() + char_data.size());
+            element.text.insert(element.text.end(), char_data.begin(), char_data.end());
+            element.text.push_back(c);
+            char_data.clear();
+            continue;
+        }
+        switch (c) {
             case LEFT_ANGLE_BRACKET: {
                 // Flush current character data to overall text.
                 element.text.reserve(element.text.size() + char_data.size());
@@ -604,6 +616,10 @@ Element Parser::parse_element(const DoctypeDeclaration& dtd, bool allow_end) {
         }
     }
     done:;
+    // General entities not properly closed.
+    if (this->general_entity_stack.size() != general_entity_stack_size_before) {
+        throw;
+    }
     return element;
 }
 

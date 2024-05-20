@@ -1,5 +1,6 @@
 // Main parsing logic goes here.
 #pragma once
+#include <functional>
 #include <string>
 #include <utility>
 #include <stack>
@@ -28,7 +29,7 @@ class Parser {
     std::stack<EntityStream> parameter_entity_stack;
     bool general_entity_active = false;
     std::size_t parameter_entity_pos = 0;
-    bool just_parsed_character_entity = false;
+    bool just_parsed_character_reference = false;
     bool parameter_entity_active = false;
     bool just_parsed_carriage_return = false;
 
@@ -39,7 +40,7 @@ class Parser {
     Char parse_character_entity();
     String parse_general_entity_name(const GeneralEntities&);
     void parse_general_entity(const GeneralEntities&);
-    String parse_general_entity_text(const GeneralEntities&);
+    String parse_general_entity_text(const GeneralEntities&, std::function<void(Char)>, int = 0);
     void end_general_entity();
     void parse_parameter_entity(const ParameterEntities&);
     void end_parameter_entity();

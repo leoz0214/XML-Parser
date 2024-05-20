@@ -401,4 +401,15 @@ xyz" b="&d;&d;A&a;&#x20;&a;B&da;" c="&#xd;&#xd;A&#xa;&#xa;B&#xd;&#xa;&t;&t;"></r
             assert((activity.text == titles[i]));
         }
     });
+    test_document(R"(
+        <!DOCTYPE root [
+            <!-- It's not looking great now - markup in entity references! -->
+            <!ENTITY example '<example a="b" c = &#39;d&#x27;   /><!--Oh no-->'>
+            <!ENTITY example2 '&example;<![CDATA[A]]>&example;B&example;C'>
+        ]><root>Extremely bad situation here!&example2;</root>
+    )", [](const Document& document) {
+        assert((document.root.text == String("Extremely bad situation here!ABC")));
+        assert((document.root.children.size() == 3));
+        assert((document.root.children.at(1).tag.attributes.at("c") == String("d")));
+    });
 }
