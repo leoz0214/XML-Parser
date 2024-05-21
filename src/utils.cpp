@@ -1,18 +1,17 @@
 #include "utils.h"
 #include <string>
 #include <cstring>
-#include <string_view>
+#include <sstream>
 
 
 namespace xml {
 
 String::String(const char* string) {
-    std::size_t pos = 0;
-    std::size_t len = std::strlen(string);
-    std::size_t bytes_read;
-    while (pos != len) {
-        this->push_back(parse_utf8(string + pos, pos, len, bytes_read));
-        pos += bytes_read;
+    std::string str(string, string + std::strlen(string));
+    StringBuffer string_buffer(str);
+    std::istream istream(&string_buffer);
+    while (istream.peek() != EOF) {
+        this->push_back(parse_utf8(istream));
     }
 }
 
@@ -20,15 +19,15 @@ std::ostream& operator<<(std::ostream& output, const String& string) {
     return output << std::string(string.begin(), string.end());
 }
 
-Char parse_utf8(const char* current_char, std::size_t pos, std::size_t len, std::size_t& bytes_read) {
-    if ((*current_char & 0b10000000) == 0) {
-        bytes_read = 1;
-        return *current_char;
+Char parse_utf8(std::istream& istream) {
+    char current_char = istream.get();
+    if ((current_char & 0b10000000) == 0) {
+        return current_char;
     }
     int sig_1s = 1;
     char mask = 0b01000000;
     // Determine if 2-bytes, 3-bytes or 4-bytes based on number of leading 1s.
-    while (*current_char & mask) {
+    while (current_char & mask) {
         sig_1s++;
         mask >>= 1;
     }
@@ -37,13 +36,13 @@ Char parse_utf8(const char* current_char, std::size_t pos, std::size_t len, std:
         throw;
     }
     // First byte has (8-n-1) bytes of interest where n is number of leading 1s
-    Char char_value = *current_char & (0b11111111 >> sig_1s);
+    Char char_value = current_char & (0b11111111 >> sig_1s);
     // Each subsequent byte has 10xxxxxx = 6 bytes of interest.
     for (int offset = 1; offset < sig_1s; ++offset) {
-        if (pos + offset == len) {
+        char byte = istream.get();
+        if (byte == EOF) {
             throw;
         }
-        char byte = *(current_char + offset);
         // Ensure byte starts with 10......
         if ((byte & 0b10000000) == 0 || (byte & 0b01000000) == 1)  {
             throw;
@@ -51,8 +50,12 @@ Char parse_utf8(const char* current_char, std::size_t pos, std::size_t len, std:
         char_value <<= 6;
         char_value += byte & 0b00111111;
     }
-    bytes_read = sig_1s;
     return char_value;
+}
+
+StringBuffer::StringBuffer(const std::string& string) {
+    this->setg(const_cast<char*>(string.data()), const_cast<char*>(string.data()),
+        const_cast<char*>(string.data()) + string.size());
 }
 
 GeneralEntity::GeneralEntity(const String& value) {

@@ -8,4 +8,9 @@ Document parse(const std::string& string) {
     return parser.parse_document();
 }
 
+Document parse(std::istream& istream) {
+    // Parser parser(istream);
+    // return parser.parse_document();
+}
+
 }

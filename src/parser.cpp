@@ -1,5 +1,5 @@
 #include "parser.h"
-#include <iostream>
+
 
 namespace xml {
 
@@ -20,11 +20,16 @@ bool EntityStream::eof() {
 }
 
 
-Parser::Parser(const std::string& data) {
-    this->data = &data;
+Parser::Parser(const std::string& string) {
+    this->string_buffer = std::make_unique<StringBuffer>(StringBuffer(string));
+    std::istream* istream_ptr = new std::istream(this->string_buffer.get());
+    this->stream = std::unique_ptr<std::istream>(istream_ptr);
 }
 
 Char Parser::get() {
+    if (previous_char != -1) {
+        return previous_char;
+    }
     this->just_parsed_character_reference = false;
     bool just_parsed_carriage_return = this->just_parsed_carriage_return;
     this->just_parsed_carriage_return = false;
@@ -37,7 +42,7 @@ Char Parser::get() {
     if (this->eof()) {
         throw;
     }
-    Char c = parse_utf8(&this->data->at(pos), pos, this->data->size(), this->increment);
+    Char c = parse_utf8(*this->stream);
     if (c == LINE_FEED && just_parsed_carriage_return) {
         operator++();
         return this->get();
@@ -46,6 +51,7 @@ Char Parser::get() {
     if (this->just_parsed_carriage_return) {
         return LINE_FEED;
     }
+    previous_char = c;
     return c;
 }
 
@@ -88,14 +94,14 @@ void Parser::operator++() {
         }
         return;
     }
-    if (!this->increment) {
-        this->get();
+    if (!this->previous_char) {
+        operator++();
     }
-    this->pos += this->increment;
+    this->previous_char = -1;
 }
 
 bool Parser::eof() {
-    return this->pos == this->data->size();
+    return this->stream->peek() == EOF;
 }
 
 bool Parser::general_entity_eof() {

@@ -1,6 +1,8 @@
 // Main parsing logic goes here.
 #pragma once
 #include <functional>
+#include <istream>
+#include <memory>
 #include <string>
 #include <utility>
 #include <stack>
@@ -21,9 +23,9 @@ struct EntityStream {
 
 
 class Parser {
-    const std::string* data;
-    std::size_t pos = 0;
-    std::size_t increment = 0;
+    std::unique_ptr<std::istream> stream;
+    std::unique_ptr<StringBuffer> string_buffer;
+    Char previous_char = -1;
     // Mainly because recursive entity references possible.
     std::stack<EntityStream> general_entity_stack;
     std::stack<EntityStream> parameter_entity_stack;
@@ -78,9 +80,10 @@ class Parser {
     void ignore_whitespace();
     Element parse_element(const DoctypeDeclaration&, bool = false);
     public:
-        Parser(const std::string&);
         Element parse_element();
         Document parse_document();
+        Parser(const std::string&);
 };
+
 
 }

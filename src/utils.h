@@ -3,8 +3,9 @@
 #include <algorithm>
 #include <initializer_list>
 #include <map>
-#include <ostream>
+#include <istream>
 #include <set>
+#include <streambuf>
 #include <string>
 #include <utility>
 #include <vector>
@@ -20,8 +21,14 @@ class String : public std::vector<Char> {
         friend std::ostream& operator<<(std::ostream&, const String&);
 };
 // Parses a UTF-8 character
-// from a given start byte, at a given offset, out of a total string size.
-Char parse_utf8(const char*, std::size_t, std::size_t, std::size_t&);
+Char parse_utf8(std::istream&);
+// Convenient streambuf wrapper for handling std::string objects as buffer.
+// Can then be used in istream. Better to have one stream interface
+// for both strings and normal streams than duplicate similar code.
+class StringBuffer : public std::streambuf {
+    public:
+        StringBuffer(const std::string&);
+};
 
 // Character constants.
 constexpr char LEFT_ANGLE_BRACKET = '<';
