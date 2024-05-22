@@ -1,22 +1,37 @@
 #include "parser.h"
+#include <fstream>
 
 
 namespace xml {
 
 EntityStream::EntityStream(const String& text) {
     this->text = text;
+    this->is_external = false;
+}
+
+EntityStream::EntityStream(const String& file_path, bool) {
+    // TO IMPROVE - PROPER String -> std::string conversion.
+    std::string file_path_literal(file_path.begin(), file_path.end());
+    std::istream* stream_ptr = new std::ifstream(file_path_literal);
+    this->stream = unique_istream_ptr(stream_ptr);
+    Parser* parser_ptr = new Parser(*this->stream);
+    this->parser = std::unique_ptr<Parser>(parser_ptr);
+    this->is_external = true;
 }
 
 Char EntityStream::get() {
-    return this->text.at(this->pos);
+    return this->is_external ? this->parser->get() : this->text.at(this->pos);
 }
 
 void EntityStream::operator++() {
     this->pos++;
+    if (is_external) {
+        this->parser->operator++();
+    }
 }
 
 bool EntityStream::eof() {
-    return this->pos >= this->text.size();
+    return this->is_external ? this->parser->eof() : this->pos >= this->text.size();
 }
 
 
@@ -26,9 +41,13 @@ Parser::Parser(const std::string& string) {
     this->stream = std::unique_ptr<std::istream>(istream_ptr);
 }
 
+Parser::Parser(std::istream& istream) {
+    this->stream = &istream;
+}
+
 Char Parser::get() {
-    if (previous_char != -1) {
-        return previous_char;
+    if (this->previous_char != -1) {
+        return this->previous_char;
     }
     this->just_parsed_character_reference = false;
     bool just_parsed_carriage_return = this->just_parsed_carriage_return;
@@ -42,7 +61,12 @@ Char Parser::get() {
     if (this->eof()) {
         throw;
     }
-    Char c = parse_utf8(*this->stream);
+    Char c;
+    if (std::holds_alternative<unique_istream_ptr>(this->stream)) {
+        c = parse_utf8(*std::get<unique_istream_ptr>(this->stream));
+    } else {
+        c = parse_utf8(*std::get<std::istream*>(this->stream));
+    }
     if (c == LINE_FEED && just_parsed_carriage_return) {
         operator++();
         return this->get();
@@ -101,7 +125,10 @@ void Parser::operator++() {
 }
 
 bool Parser::eof() {
-    return this->stream->peek() == EOF;
+    if (std::holds_alternative<unique_istream_ptr>(this->stream)) {
+        return std::get<unique_istream_ptr>(this->stream)->peek() == EOF;
+    }
+    return std::get<std::istream*>(this->stream)->peek() == EOF;
 }
 
 bool Parser::general_entity_eof() {
@@ -155,7 +182,7 @@ String Parser::parse_nmtoken(const String& until) {
     return nmtoken;
 }
 
-String Parser::parse_attribute_value(const DoctypeDeclaration& dtd) {
+String Parser::parse_attribute_value(const DoctypeDeclaration& dtd, bool references_active) {
     // Ensure opening quote (double or single accepted).
     Char quote = this->get();
     if (quote != SINGLE_QUOTE && quote != DOUBLE_QUOTE) {
@@ -167,6 +194,13 @@ String Parser::parse_attribute_value(const DoctypeDeclaration& dtd) {
     while (true) {
         Char c = this->get(dtd.general_entities);
         if (this->general_entity_stack.size() > general_entity_stack_size_before) {
+            if (!references_active) {
+                throw;
+            }
+            if (this->general_entity_stack.top().is_external) {
+                // No external general entities in attribute values.
+                throw;
+            }
             // Parse all general entity text and normalise whitespace.
             this->parse_general_entity_text(dtd.general_entities, [&value, this](Char c) {
                 // Included in literal - ignore quotes but disallow < still for example.
@@ -181,16 +215,16 @@ String Parser::parse_attribute_value(const DoctypeDeclaration& dtd) {
             }, general_entity_stack_size_before);
             continue;
         }
-        if (!just_parsed_character_reference) {
-            operator++();
-        }
         if (!this->just_parsed_character_reference) {
+            operator++();
             if (c == quote) {
                 break;
             }
             if (!valid_attribute_value_character(c)) {
                 throw;
             }
+        } else if (!references_active) {
+            throw;
         }
         if (is_whitespace(c) && !this->just_parsed_character_reference) {
             // All literal whitespace that is not char reference becomes space.
@@ -294,7 +328,15 @@ void Parser::parse_general_entity(const GeneralEntities& general_entities) {
     if (!general_entities.count(name)) {
         throw;
     }
-    this->general_entity_stack.push({general_entities.at(name).value});
+    if (general_entities.at(name).is_unparsed) {
+        throw;
+    }
+    if (general_entities.at(name).is_external) {
+        this->general_entity_stack.push(
+            {general_entities.at(name).external_id.system_id, true});
+    } else {
+        this->general_entity_stack.push({general_entities.at(name).value});
+    }
     this->general_entity_active = true;
 }
 
@@ -354,7 +396,7 @@ void Parser::end_parameter_entity() {
     this->parameter_entity_active = false;
 }
 
-std::pair<String, String> Parser::parse_attribute(const DoctypeDeclaration& dtd) {
+std::pair<String, String> Parser::parse_attribute(const DoctypeDeclaration& dtd, bool references_active) {
     String name = this->parse_name(ATTRIBUTE_NAME_TERMINATORS);
     // Ignore whitespace until '=' is reached.
     while (this->get() != EQUAL) {
@@ -363,7 +405,7 @@ std::pair<String, String> Parser::parse_attribute(const DoctypeDeclaration& dtd)
     // Increment the '='
     operator++();
     this->ignore_whitespace();
-    String value = this->parse_attribute_value(dtd);
+    String value = this->parse_attribute_value(dtd, references_active);
     return {name, value};
 }
 
@@ -654,7 +696,7 @@ void Parser::parse_xml_declaration(Document& document) {
             operator++();
             break;
         }
-        std::pair<String, String> attribute = this->parse_attribute(document.doctype_declaration);
+        std::pair<String, String> attribute = this->parse_attribute(document.doctype_declaration, false);
         if (attribute.first == XML_DECLARATION_VERSION_NAME) {
             String& version = attribute.second;
             if (!version_info_possible || !valid_version(version)) {

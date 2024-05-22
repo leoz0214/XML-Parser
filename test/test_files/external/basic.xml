@@ -1,0 +1,3 @@
+<!-- This is the simplest external entity possible. Most basic of tests.
+    Simply ensures external entity parsing works on a fundamental level! -->
+<example att="yes">Embed external entity!!!</example>

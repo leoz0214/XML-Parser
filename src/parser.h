@@ -6,16 +6,27 @@
 #include <string>
 #include <utility>
 #include <stack>
+#include <variant>
 #include <vector>
 #include "utils.h"
 
 
 namespace xml {
 
+typedef std::unique_ptr<std::istream> unique_istream_ptr;
+
+class Parser;
+
 struct EntityStream {
     String text;
+    std::unique_ptr<Parser> parser = nullptr;
+    unique_istream_ptr stream = nullptr;
     std::size_t pos = 0;
+    String version = "1.0";
+    String encoding = "utf-8";
+    bool is_external;
     EntityStream(const String&);
+    EntityStream(const String&, bool);
     Char get();
     void operator++();
     bool eof();
@@ -23,7 +34,10 @@ struct EntityStream {
 
 
 class Parser {
-    std::unique_ptr<std::istream> stream;
+    // Don't repeat code - use parser get/++/eof for external entity parsing.
+    friend class EntityStream;
+    // Note, unique (dynamic) pointer for strings and normal pointers for input streams. 
+    std::variant<unique_istream_ptr, std::istream*> stream;
     std::unique_ptr<StringBuffer> string_buffer;
     Char previous_char = -1;
     // Mainly because recursive entity references possible.
@@ -37,7 +51,7 @@ class Parser {
 
     String parse_name(const String&, bool validate = true);
     String parse_nmtoken(const String&);
-    String parse_attribute_value(const DoctypeDeclaration&);
+    String parse_attribute_value(const DoctypeDeclaration&, bool references_active = true);
     String parse_entity_value(const DoctypeDeclaration&);
     Char parse_character_entity();
     String parse_general_entity_name(const GeneralEntities&);
@@ -46,7 +60,7 @@ class Parser {
     void end_general_entity();
     void parse_parameter_entity(const ParameterEntities&);
     void end_parameter_entity();
-    std::pair<String, String> parse_attribute(const DoctypeDeclaration&);
+    std::pair<String, String> parse_attribute(const DoctypeDeclaration&, bool references_active = true);
     Tag parse_tag(const DoctypeDeclaration&);
     void parse_comment();
     String parse_cdata();
@@ -83,6 +97,7 @@ class Parser {
         Element parse_element();
         Document parse_document();
         Parser(const std::string&);
+        Parser(std::istream&);
 };
 
 
