@@ -16,7 +16,46 @@ String::String(const char* string) {
 }
 
 std::ostream& operator<<(std::ostream& output, const String& string) {
-    return output << std::string(string.begin(), string.end());
+    return output << std::string(string);
+}
+
+void fill_utf8_byte(char& byte, Char& value_left, int bits) {
+    for (int n = 0; n < bits; ++n) {
+        if (value_left & 1) {
+            byte |= (1 << n);
+        }   
+        value_left >>= 1;
+    }
+}
+
+String::operator std::string() const {
+    std::string string;
+    string.reserve(this->size() * 4);
+    for (Char c : *this) {
+        if (c < 0) {
+            // Invalid character.
+            throw;
+        }
+        if (c <= UTF8_BYTE_LIMITS[0]) {
+            // Just ASCII.
+            string.push_back(c);
+            continue;
+        } else if (c >= UTF8_BYTE_LIMITS[3]) {
+            // Too large
+            throw;
+        }
+        int bytes = c <= UTF8_BYTE_LIMITS[1] ? 2 : c <= UTF8_BYTE_LIMITS[2] ? 3 : 4;
+        char byte1 = bytes == 2 ? 0b11000000 : bytes == 3 ? 0b11100000 : 0b11110000;
+        std::vector<char> extra_bytes(bytes - 1, 0b10000000);
+        for (int i = bytes - 2; i >= 0; --i) {
+            fill_utf8_byte(extra_bytes[i], c, 6);
+        }
+        fill_utf8_byte(byte1, c, 7 - bytes);
+        string.push_back(byte1);
+        string.insert(string.end(), extra_bytes.begin(), extra_bytes.end());
+    }
+    string.shrink_to_fit();
+    return string;
 }
 
 Char parse_utf8(std::istream& istream) {

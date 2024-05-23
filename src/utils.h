@@ -19,7 +19,13 @@ class String : public std::vector<Char> {
         using std::vector<Char>::vector;
         String(const char*);
         friend std::ostream& operator<<(std::ostream&, const String&);
+        // Convert Unicode characters in their numeric values
+        // back to their original binary form (std::string compatibility).
+        operator std::string() const;
 };
+constexpr Char UTF8_BYTE_LIMITS[4] {0x7F, 0x7FF, 0xFFFF, 0x10FFFF};
+// Fills UTF-8 byte with values (number of right bits to use and current value left).
+void fill_utf8_byte(char&, Char&, int);
 // Parses a UTF-8 character
 Char parse_utf8(std::istream&);
 // Convenient streambuf wrapper for handling std::string objects as buffer.

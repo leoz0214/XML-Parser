@@ -44,11 +44,14 @@ int main() {
         assert((children.at(2).tag.name == String("metadata")));
         assert((children.at(2).tag.type == TagType::empty));
     });
-    test_document_file("external1.xml", [](const Document& document) {
+    test_document_file("external.xml", [](const Document& document) {
         assert((document.doctype_declaration.general_entities.at("external").is_external));
-        assert((document.root.children.size() == 3));
+        assert((document.root.children.size() == 4));
         assert((document.root.children.at(0).tag.name == String("example")));
         assert((document.root.children.at(1).tag.attributes.at("att") == String("yes")));
         assert((document.root.children.at(2).text == String("Embed external entity!!!")));
+        Element child = document.root.children.at(3);
+        assert((child.children.size() == 1));
+        assert((child.children.at(0).text == String("&&&")));
     });
 }

@@ -1,0 +1,13 @@
+<!-- IMPORTANT - must run exe in root of project -->
+<!DOCTYPE root [
+    <!ENTITY external SYSTEM "test/test_files/external/basic.xml">
+    <!ENTITY ampersands SYSTEM "test/test_files/external/with_text_decl.xml">
+]>
+<root>
+    a&external;b
+    <!-- - - - - - -->
+    c&external;d
+    e&external;f
+    <child>
+        &ampersands;</child>
+</root>

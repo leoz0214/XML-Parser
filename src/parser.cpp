@@ -6,17 +6,39 @@ namespace xml {
 
 EntityStream::EntityStream(const String& text) {
     this->text = text;
+    this->pos = 0;
     this->is_external = false;
 }
 
 EntityStream::EntityStream(const String& file_path, bool) {
     // TO IMPROVE - PROPER String -> std::string conversion.
-    std::string file_path_literal(file_path.begin(), file_path.end());
+    std::string file_path_literal = std::string(file_path);
     std::istream* stream_ptr = new std::ifstream(file_path_literal);
     this->stream = unique_istream_ptr(stream_ptr);
     Parser* parser_ptr = new Parser(*this->stream);
     this->parser = std::unique_ptr<Parser>(parser_ptr);
     this->is_external = true;
+    // Seek ahead, checking for text declaration.
+    bool has_text_declaration = true;
+    for (Char c : String("<?xml")) {
+        if (this->eof() || this->get() != c) {
+            has_text_declaration = false;
+            break;
+        }
+        operator++();
+    }
+    if (has_text_declaration) {
+        // At least one whitespace after.
+        has_text_declaration = !this->eof() && is_whitespace(this->get());
+    }
+    if (!has_text_declaration) {
+        // Reset stream to start.
+        this->stream->seekg(std::ios::beg);
+        this->parser->previous_char = -1;
+        this->parser->just_parsed_carriage_return = false;
+        return;
+    }
+    this->parse_text_declaration();
 }
 
 Char EntityStream::get() {
@@ -32,6 +54,50 @@ void EntityStream::operator++() {
 
 bool EntityStream::eof() {
     return this->is_external ? this->parser->eof() : this->pos >= this->text.size();
+}
+
+void EntityStream::parse_text_declaration() {
+    bool version_parsed = false;
+    bool encoding_parsed = false;
+    while (true) {
+        this->parser->ignore_whitespace();
+        Char c = this->get();
+        if (c == QUESTION_MARK) {
+            operator++();
+            if (this->get() != TAG_CLOSE) {
+                throw;
+            }
+            operator++();
+            break;
+        }
+        DoctypeDeclaration dummy;
+        std::pair attribute = this->parser->parse_attribute(dummy, false);
+        if (attribute.first == XML_DECLARATION_VERSION_NAME) {
+            if (version_parsed || encoding_parsed) {
+                throw;
+            }
+            if (!valid_version(attribute.second)) {
+                throw;
+            }
+            this->version = attribute.second;
+            version_parsed = true;
+        } else if (attribute.first == XML_DECLARATION_ENCODING_NAME) {
+            if (encoding_parsed) {
+                throw;
+            }
+            String& encoding = attribute.second;
+            std::transform(encoding.begin(), encoding.end(), encoding.begin(), [](Char c) {
+                return std::tolower(c);
+            });
+            if (!valid_encoding(encoding)) {
+                throw;
+            }
+            this->version = encoding;
+            encoding_parsed = true;
+        } else {
+            throw;
+        }
+    }
 }
 
 
@@ -399,8 +465,9 @@ void Parser::end_parameter_entity() {
 std::pair<String, String> Parser::parse_attribute(const DoctypeDeclaration& dtd, bool references_active) {
     String name = this->parse_name(ATTRIBUTE_NAME_TERMINATORS);
     // Ignore whitespace until '=' is reached.
-    while (this->get() != EQUAL) {
-        operator++();
+    this->ignore_whitespace();
+    if (this->get() != EQUAL) {
+        throw;
     }
     // Increment the '='
     operator++();

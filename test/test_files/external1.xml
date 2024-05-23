@@ -1,9 +1,0 @@
-<!-- IMPORTANT - must run exe in root of project -->
-<!DOCTYPE root [
-    <!ENTITY external SYSTEM "test/test_files/external/basic.xml">
-]>
-<root>
-    &external;
-    &external;
-    &external;
-</root>

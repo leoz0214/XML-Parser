@@ -21,15 +21,16 @@ struct EntityStream {
     String text;
     std::unique_ptr<Parser> parser = nullptr;
     unique_istream_ptr stream = nullptr;
-    std::size_t pos = 0;
-    String version = "1.0";
-    String encoding = "utf-8";
+    std::size_t pos;
+    String version;
+    String encoding;
     bool is_external;
     EntityStream(const String&);
     EntityStream(const String&, bool);
     Char get();
     void operator++();
     bool eof();
+    void parse_text_declaration();
 };
 
 
@@ -38,7 +39,7 @@ class Parser {
     friend class EntityStream;
     // Note, unique (dynamic) pointer for strings and normal pointers for input streams. 
     std::variant<unique_istream_ptr, std::istream*> stream;
-    std::unique_ptr<StringBuffer> string_buffer;
+    std::unique_ptr<StringBuffer> string_buffer = nullptr;
     Char previous_char = -1;
     // Mainly because recursive entity references possible.
     std::stack<EntityStream> general_entity_stack;
