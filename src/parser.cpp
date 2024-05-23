@@ -11,9 +11,7 @@ EntityStream::EntityStream(const String& text) {
 }
 
 EntityStream::EntityStream(const String& file_path, bool) {
-    // TO IMPROVE - PROPER String -> std::string conversion.
-    std::string file_path_literal = std::string(file_path);
-    std::istream* stream_ptr = new std::ifstream(file_path_literal);
+    std::istream* stream_ptr = new std::ifstream(std::string(file_path));
     this->stream = unique_istream_ptr(stream_ptr);
     Parser* parser_ptr = new Parser(*this->stream);
     this->parser = std::unique_ptr<Parser>(parser_ptr);
@@ -36,16 +34,44 @@ EntityStream::EntityStream(const String& file_path, bool) {
         this->stream->seekg(std::ios::beg);
         this->parser->previous_char = -1;
         this->parser->just_parsed_carriage_return = false;
+        this->leading_parameter_space_done = false;
+        this->trailing_parameter_space_done = false;
         return;
     }
     this->parse_text_declaration();
 }
 
 Char EntityStream::get() {
+    // Handle special case where parameter entity replacement
+    // text must be wrapped with a leading and trailing space if not in entity value.
+    if (this->is_parameter && !this->in_entity_value) {
+        if (!this->leading_parameter_space_done) {
+            return SPACE;
+        }
+        if (
+            !this->trailing_parameter_space_done &&
+            this->is_external ? this->parser->eof() : this->pos >= this->text.size()
+        ) {
+            return SPACE;
+        };
+    }
     return this->is_external ? this->parser->get() : this->text.at(this->pos);
 }
 
 void EntityStream::operator++() {
+    if (this->is_parameter && !this->in_entity_value) {
+        if (!this->leading_parameter_space_done) {
+            this->leading_parameter_space_done = true;
+            return;
+        }
+        if (
+            !this->trailing_parameter_space_done &&
+            this->is_external ? this->parser->eof() : this->pos >= this->text.size()
+        ) {
+            this->trailing_parameter_space_done = true;
+            return;
+        };
+    }
     this->pos++;
     if (is_external) {
         this->parser->operator++();
@@ -53,6 +79,9 @@ void EntityStream::operator++() {
 }
 
 bool EntityStream::eof() {
+    if (this->is_parameter && !this->in_entity_value) {
+        return this->trailing_parameter_space_done;
+    }
     return this->is_external ? this->parser->eof() : this->pos >= this->text.size();
 }
 
@@ -100,7 +129,6 @@ void EntityStream::parse_text_declaration() {
     }
 }
 
-
 Parser::Parser(const std::string& string) {
     this->string_buffer = std::make_unique<StringBuffer>(StringBuffer(string));
     std::istream* istream_ptr = new std::istream(this->string_buffer.get());
@@ -123,6 +151,7 @@ Char Parser::get() {
     }
     if (this->parameter_entity_active) {
         return this->parameter_entity_stack.top().get();
+
     }
     if (this->eof()) {
         throw;
@@ -159,12 +188,19 @@ Char Parser::get(const GeneralEntities& general_entities) {
     return c;
 }
 
-Char Parser::get(const ParameterEntities& parameter_entities) {
+Char Parser::get(const ParameterEntities& parameter_entities, bool in_markup, bool in_entity_value) {
     Char c = this->get();
     if (c == PERCENT_SIGN && !this->just_parsed_character_reference) {
+        if (in_markup && !this->external_dtd_content_active) {
+            // Can only have PEs inside markup when parsing external DTD or parameter entity.
+            throw;
+        }
         operator++();
-        this->parse_parameter_entity(parameter_entities);
-        return this->parameter_entity_stack.top().get();
+        this->parse_parameter_entity(parameter_entities, in_entity_value);
+        c = this->parameter_entity_stack.top().get();
+        if (c == PERCENT_SIGN) {
+            return this->get(parameter_entities, in_markup, in_entity_value);
+        }
     }
     return c;
 }
@@ -311,7 +347,7 @@ String Parser::parse_entity_value(const DoctypeDeclaration& dtd) {
     String value;
     while (true) {
         int before_parameter_entity_stack_size = this->parameter_entity_stack.size();
-        Char c = this->get(dtd.parameter_entities);
+        Char c = this->get(dtd.parameter_entities, false, true);
         int after_parameter_entity_stack_size = this->parameter_entity_stack.size();
         if (after_parameter_entity_stack_size > before_parameter_entity_stack_size) {
             // Parse all parameter entity text.
@@ -439,7 +475,7 @@ void Parser::end_general_entity() {
     this->general_entity_active = false;
 }
 
-void Parser::parse_parameter_entity(const ParameterEntities& parameter_entities) {
+void Parser::parse_parameter_entity(const ParameterEntities& parameter_entities, bool in_entity_value) {
     String name = "";
     while (true) {
         Char c = this->get();
@@ -453,13 +489,22 @@ void Parser::parse_parameter_entity(const ParameterEntities& parameter_entities)
         // Parameter entity name is not declared.
         throw;
     }
-    this->parameter_entity_stack.push({parameter_entities.at(name).value});
+    EntityStream parameter_entity = parameter_entities.at(name).is_external
+        ? EntityStream(parameter_entities.at(name).external_id.system_id, true)
+        : EntityStream(parameter_entities.at(name).value);
+    parameter_entity.is_parameter = true;
+    parameter_entity.in_entity_value = in_entity_value;
+    if (this->parameter_entity_stack.empty()) {
+        this->external_dtd_content_active = parameter_entity.is_external;
+    }
+    this->parameter_entity_stack.push(std::move(parameter_entity));
     this->parameter_entity_active = true;
 }
 
 void Parser::end_parameter_entity() {
     this->parameter_entity_stack = {};
     this->parameter_entity_active = false;
+    this->external_dtd_content_active = false;
 }
 
 std::pair<String, String> Parser::parse_attribute(const DoctypeDeclaration& dtd, bool references_active) {
@@ -870,10 +915,7 @@ void Parser::parse_internal_dtd_subset(DoctypeDeclaration& dtd) {
         if (this->parameter_entity_eof()) {
             this->end_parameter_entity();
         }
-        Char c = this->get(dtd.parameter_entities);
-        while (c == PERCENT_SIGN) {
-            c = this->get(dtd.parameter_entities);
-        }
+        Char c = this->get(dtd.parameter_entities, false);
         operator++();
         if (c == RIGHT_SQUARE_BRACKET) {
             if (this->parameter_entity_active) {
@@ -881,26 +923,23 @@ void Parser::parse_internal_dtd_subset(DoctypeDeclaration& dtd) {
             }
             return;
         }
+        int parameter_entity_stack_size_before = this->parameter_entity_stack.size();
         if (is_whitespace(c)) {
             continue;
         } else if (c == LEFT_ANGLE_BRACKET) {
             // Must be exclamation mark or processing instruction or invalid.
             c = this->get();
             if (c != EXCLAMATION_MARK) {
-                if (c == QUESTION_MARK && !this->parameter_entity_active) {
+                if (c == QUESTION_MARK) {
                     operator++();
                     dtd.processing_instructions.push_back(this->parse_processing_instruction());
                     continue;
                 }
-                // Not processing instruction, or parameter entity active.
+                // Not processing instruction.
                 throw;
             }
             operator++();
             if (this->get() == HYPHEN) {
-                if (this->parameter_entity_active) {
-                    // Comment cannot be in parameter entity text.
-                    throw;
-                }
                 // Comment or invalid.
                 operator++();
                 if (this->get() != HYPHEN) {
@@ -913,6 +952,10 @@ void Parser::parse_internal_dtd_subset(DoctypeDeclaration& dtd) {
                 this->parse_markup_declaration(dtd);
             }
         } else {
+            throw;
+        }
+        int parameter_entity_stack_size_after = this->parameter_entity_stack.size();
+        if (parameter_entity_stack_size_after > parameter_entity_stack_size_before) {
             throw;
         }
     }
@@ -948,7 +991,7 @@ void Parser::parse_element_declaration(DoctypeDeclaration& dtd) {
         // Mixed/element content.
         operator++();
         this->ignore_whitespace();
-        if (this->get() == OCTOTHORPE) {
+        if (this->get(dtd.parameter_entities) == OCTOTHORPE) {
             // Indicates mixed content or invalid.
             element_declaration.type = ElementType::mixed;
             element_declaration.mixed_content = this->parse_mixed_content_model();
@@ -1284,7 +1327,8 @@ void Parser::parse_general_entity_declaration(DoctypeDeclaration& dtd) {
     GeneralEntity ge;
     ge.name = this->parse_name(WHITESPACE);
     this->ignore_whitespace();
-    if (this->get() == SINGLE_QUOTE || this->get() == DOUBLE_QUOTE) {
+    Char quote = this->get();
+    if (quote == SINGLE_QUOTE || quote == DOUBLE_QUOTE) {
         // Has a literal value.
         ge.value = this->parse_entity_value(dtd);
     } else {
@@ -1326,7 +1370,8 @@ void Parser::parse_parameter_entity_declaration(DoctypeDeclaration& dtd) {
     ParameterEntity pe;
     pe.name = this->parse_name(WHITESPACE);
     this->ignore_whitespace();
-    if (this->get() == SINGLE_QUOTE || this->get() == DOUBLE_QUOTE) {
+    Char quote = this->get();
+    if (quote == SINGLE_QUOTE || quote == DOUBLE_QUOTE) {
         // Has a literal value.
         pe.value = this->parse_entity_value(dtd);
     } else {

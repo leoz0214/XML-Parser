@@ -1,0 +1,4 @@
+<!DOCTYPE root [
+    <!-- Parameter Entity Test -->
+    <!ENTITY % example SYSTEM "test/test_files/external/parameter.xml">
+            %example;<!ENTITY d "&c;&c;&c;&c;">]><root>&d;</root>

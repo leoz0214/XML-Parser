@@ -25,6 +25,11 @@ struct EntityStream {
     String version;
     String encoding;
     bool is_external;
+    bool is_parameter = false;
+    // Parameter entities only.
+    bool in_entity_value;
+    bool leading_parameter_space_done = false;
+    bool trailing_parameter_space_done = false;
     EntityStream(const String&);
     EntityStream(const String&, bool);
     Char get();
@@ -49,6 +54,7 @@ class Parser {
     bool just_parsed_character_reference = false;
     bool parameter_entity_active = false;
     bool just_parsed_carriage_return = false;
+    bool external_dtd_content_active = false;
 
     String parse_name(const String&, bool validate = true);
     String parse_nmtoken(const String&);
@@ -59,7 +65,7 @@ class Parser {
     void parse_general_entity(const GeneralEntities&);
     String parse_general_entity_text(const GeneralEntities&, std::function<void(Char)>, int = 0);
     void end_general_entity();
-    void parse_parameter_entity(const ParameterEntities&);
+    void parse_parameter_entity(const ParameterEntities&, bool);
     void end_parameter_entity();
     std::pair<String, String> parse_attribute(const DoctypeDeclaration&, bool references_active = true);
     Tag parse_tag(const DoctypeDeclaration&);
@@ -87,7 +93,7 @@ class Parser {
     void parse_notation_declaration(DoctypeDeclaration&);
     Char get();
     Char get(const GeneralEntities&);
-    Char get(const ParameterEntities&);
+    Char get(const ParameterEntities&, bool in_markup = true, bool in_entity_value = false);
     void operator++();
     bool eof();
     bool general_entity_eof();

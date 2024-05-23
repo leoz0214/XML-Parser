@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Example of a possible external parameter entity -->
+<!ENTITY a "a">
+<!ENTITY b "&a;&a;"><?param-pi Wow!?>
+<!ENTITY c "&b;&b;&b;"><!-- END OF PARAMETER ENTITIY -->

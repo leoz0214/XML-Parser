@@ -54,4 +54,9 @@ int main() {
         assert((child.children.size() == 1));
         assert((child.children.at(0).text == String("&&&")));
     });
+    test_document_file("parameter.xml", [](const Document& document) {
+        assert((document.root.text.size() == 24));
+        assert((document.doctype_declaration.processing_instructions.at(0).target
+            == String("param-pi")));
+    });
 }
