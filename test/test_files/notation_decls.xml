@@ -1,0 +1,4 @@
+<!DOCTYPE root [
+    <!ENTITY % notations SYSTEM "test/test_files/external/pe_in_notation_decl.xml">
+    %notations;
+]><root></root>

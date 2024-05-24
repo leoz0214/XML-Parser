@@ -1,0 +1,4 @@
+<!DOCTYPE root [
+    <!ENTITY % attlist SYSTEM "test/test_files/external/pe_in_attlist_decl.xml">
+    %attlist;
+]><root></root>

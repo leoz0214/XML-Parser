@@ -1,0 +1,5 @@
+<!ENTITY % pe1 "my-notation">
+<!ENTITY % pe2 "PUBLIC">
+<!ENTITY % pe3 "SYSTEM">
+<!NOTATION%pe1;%pe2;"Notation">
+<!NOTATION Example%pe3;"%pe2;">

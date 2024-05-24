@@ -59,4 +59,36 @@ int main() {
         assert((document.doctype_declaration.processing_instructions.at(0).target
             == String("param-pi")));
     });
+    test_document_file("element_decls.xml", [](const Document& document) {
+        auto elements = document.doctype_declaration.element_declarations;
+        assert((elements.at("my-element").element_content.parts.size() == 3));
+        assert((elements.at("my-element").element_content.parts.at(2).count
+            == ElementContentCount::zero_or_one));
+        assert((elements.at("ex2").element_content.is_sequence == false));
+        assert((elements.at("ex2").element_content.parts.at(0).name == String("abc")));
+        assert((elements.at("widgets").element_content.count == ElementContentCount::zero_or_more));
+        assert((elements.at("p").mixed_content.choices.size() == 5));
+        assert((elements.at("metadata").type == ElementType::empty));
+    });
+    test_document_file("attlist_decl.xml", [](const Document& document) {
+        AttributeListDeclaration decl = 
+            document.doctype_declaration.attribute_list_declarations.at("my-element");
+        assert((decl.at("title").type == AttributeType::cdata));
+        assert((decl.at("title").presence == AttributePresence::required));
+        assert((decl.at("identifier").type == AttributeType::id));
+        assert((decl.at("atts").default_value == String("abc def ghi")));
+        assert((decl.at("level").enumeration.size() == 3));
+    });
+    test_document_file("entity_decls.xml", [](const Document& document) {
+        auto p = document.doctype_declaration.parameter_entities;
+        auto g = document.doctype_declaration.general_entities;
+        assert((p.at("ccc").value == String("'This is ccc BTW")));
+        assert((g.at("x").value == String("This is ccc BTW !!!!")));
+        assert((g.at("abc").external_id.public_id == String(" ccc ")));
+    });
+    test_document_file("notation_decls.xml", [](const Document& document) {
+        auto decls = document.doctype_declaration.notation_declarations;
+        assert((decls.at("my-notation").public_id == String("Notation")));
+        assert((decls.at("Example").system_id == String(" PUBLIC ")));
+    });
 }

@@ -1,0 +1,4 @@
+<!DOCTYPE root [
+    <!ENTITY % entities SYSTEM "test/test_files/external/pe_in_entity_decl.xml">
+    %entities;
+]><root></root>

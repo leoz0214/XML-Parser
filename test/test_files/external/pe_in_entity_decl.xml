@@ -1,0 +1,7 @@
+<!ENTITY % a "y">
+<!ENTITY %%a; "ccc">
+<!ENTITY %%y; "'This is ccc BTW">
+<!ENTITY x %ccc;!!!!'>
+<!ENTITY % pub "PUBLIC">
+<!ENTITY % ndata "NDATA">
+<!ENTITY abc %pub; "%y;" '%y;'%ndata;%y;>  

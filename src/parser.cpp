@@ -1,6 +1,6 @@
 #include "parser.h"
 #include <fstream>
-
+#include <iostream>
 
 namespace xml {
 
@@ -42,6 +42,9 @@ EntityStream::EntityStream(const String& file_path, bool) {
 }
 
 Char EntityStream::get() {
+    if (this->is_external && this->parser->previous_char != -1) {
+        return this->parser->previous_char;
+    }
     // Handle special case where parameter entity replacement
     // text must be wrapped with a leading and trailing space if not in entity value.
     if (this->is_parameter && !this->in_entity_value) {
@@ -146,12 +149,11 @@ Char Parser::get() {
     this->just_parsed_character_reference = false;
     bool just_parsed_carriage_return = this->just_parsed_carriage_return;
     this->just_parsed_carriage_return = false;
-    if (this->general_entity_active) {
+    if (this->general_entity_stack.size()) {
         return this->general_entity_stack.top().get();
     }
-    if (this->parameter_entity_active) {
+    if (this->parameter_entity_stack.size()) {
         return this->parameter_entity_stack.top().get();
-
     }
     if (this->eof()) {
         throw;
@@ -170,7 +172,7 @@ Char Parser::get() {
     if (this->just_parsed_carriage_return) {
         return LINE_FEED;
     }
-    previous_char = c;
+    this->previous_char = c;
     return c;
 }
 
@@ -188,18 +190,27 @@ Char Parser::get(const GeneralEntities& general_entities) {
     return c;
 }
 
-Char Parser::get(const ParameterEntities& parameter_entities, bool in_markup, bool in_entity_value) {
+Char Parser::get(
+    const ParameterEntities& parameter_entities,
+    bool in_markup, bool in_entity_value, bool ignore_whitespace_after_percent_sign
+) {
     Char c = this->get();
     if (c == PERCENT_SIGN && !this->just_parsed_character_reference) {
+        operator++();
+        Char next_char = this->get(parameter_entities, in_markup, in_entity_value);
+        if (is_whitespace(next_char) && ignore_whitespace_after_percent_sign) {
+            return PERCENT_SIGN;
+        }
         if (in_markup && !this->external_dtd_content_active) {
             // Can only have PEs inside markup when parsing external DTD or parameter entity.
             throw;
         }
-        operator++();
         this->parse_parameter_entity(parameter_entities, in_entity_value);
         c = this->parameter_entity_stack.top().get();
         if (c == PERCENT_SIGN) {
-            return this->get(parameter_entities, in_markup, in_entity_value);
+            return this->get(
+                parameter_entities, in_markup, in_entity_value,
+                ignore_whitespace_after_percent_sign);
         }
     }
     return c;
@@ -220,8 +231,8 @@ void Parser::operator++() {
         }
         return;
     }
-    if (!this->previous_char) {
-        operator++();
+    if (this->previous_char == -1) {
+        this->get();
     }
     this->previous_char = -1;
 }
@@ -249,10 +260,18 @@ void Parser::ignore_whitespace() {
     }
 }
 
-String Parser::parse_name(const String& until, bool validate) {
+void Parser::ignore_whitespace(const ParameterEntities& parameter_entities) {
+    while (is_whitespace(this->get(parameter_entities))) {
+        operator++();
+    }
+}
+
+String Parser::parse_name(
+    const String& until, bool validate, const ParameterEntities* parameter_entities
+) {
     String name;
     while (true) {
-        Char c = this->get();
+        Char c = parameter_entities != nullptr ? this->get(*parameter_entities) : this->get();
         if (std::find(until.cbegin(), until.cend(), c) != until.cend()) {
             break;
         }
@@ -271,10 +290,10 @@ String Parser::parse_name(const String& until, bool validate) {
     return name;
 }
 
-String Parser::parse_nmtoken(const String& until) {
+String Parser::parse_nmtoken(const String& until, const ParameterEntities& parameter_entities) {
     String nmtoken;
     while (true) {
-        Char c = this->get();
+        Char c = this->get(parameter_entities);
         if (std::find(until.cbegin(), until.cend(), c) != until.cend()) {
             break;
         }
@@ -403,6 +422,9 @@ Char Parser::parse_character_entity() {
         if (c == SEMI_COLON) {
             break;
         }
+        if (c == SPACE) {
+            throw;
+        }
     }
     this->just_parsed_character_reference = true;
     return xml::parse_character_entity(string);
@@ -415,6 +437,9 @@ String Parser::parse_general_entity_name(const GeneralEntities& general_entities
         operator++();
         if (c == SEMI_COLON) {
             break;
+        }
+        if (c == SPACE) {
+            throw;
         }
         name.push_back(c);
     }
@@ -482,6 +507,9 @@ void Parser::parse_parameter_entity(const ParameterEntities& parameter_entities,
         operator++();
         if (c == SEMI_COLON) {
             break;
+        }
+        if (this->parameter_entity_eof()) {
+            throw;
         }
         name.push_back(c);
     }
@@ -850,15 +878,15 @@ void Parser::parse_xml_declaration(Document& document) {
     }
 }
 
-String Parser::parse_public_id() {
-    Char quote = this->get();
+String Parser::parse_public_id(const ParameterEntities* parameter_entities) {
+    Char quote = parameter_entities != nullptr ? this->get(*parameter_entities) : this->get();
     operator++();
     if (quote != SINGLE_QUOTE && quote != DOUBLE_QUOTE) {
         throw;
     }
     String public_id;
     while (true) {
-        Char c = this->get();
+        Char c = parameter_entities != nullptr ? this->get(*parameter_entities) : this->get();
         operator++();
         if (c == quote) {
             break;
@@ -871,15 +899,15 @@ String Parser::parse_public_id() {
     return public_id;
 }
 
-String Parser::parse_system_id() {
-    Char quote = this->get();
+String Parser::parse_system_id(const ParameterEntities* parameter_entities) {
+    Char quote = parameter_entities != nullptr ? this->get(*parameter_entities) : this->get();
     operator++();
     if (quote != SINGLE_QUOTE && quote != DOUBLE_QUOTE) {
         throw;
     }
     String system_id;
     while (true) {
-        Char c = this->get();
+        Char c = parameter_entities != nullptr ? this->get(*parameter_entities) : this->get();
         operator++();
         if (c == quote) {
             break;
@@ -892,21 +920,29 @@ String Parser::parse_system_id() {
     return system_id;
 }
 
-ExternalID Parser::parse_external_id() {
+ExternalID Parser::parse_external_id(const ParameterEntities* parameter_entities) {
     ExternalID external_id;
     // Looking for PUBLIC / SYSTEM - parsing like a name is just fine.
-    String type_string = this->parse_name(WHITESPACE, false);
+    String type_string = this->parse_name(WHITESPACE, false, parameter_entities);
     external_id.type = get_external_id_type(type_string);
-    this->ignore_whitespace();
+    if (parameter_entities) {
+        this->ignore_whitespace(*parameter_entities);
+    } else {
+        this->ignore_whitespace();
+    }
     if (external_id.type == ExternalIDType::public_) {
-        external_id.public_id = this->parse_public_id();
-        if (!is_whitespace(this->get())) {
+        external_id.public_id = this->parse_public_id(parameter_entities);
+        if (!is_whitespace(parameter_entities != nullptr ? this->get(*parameter_entities) : this->get())) {
             // Min 1 whitespace between public/system ID.
             throw;
         }
-        this->ignore_whitespace();
+        if (parameter_entities) {
+            this->ignore_whitespace(*parameter_entities);
+        } else {
+            this->ignore_whitespace();
+        }
     }
-    external_id.system_id = this->parse_system_id();
+    external_id.system_id = this->parse_system_id(parameter_entities);
     return external_id;
 }
 
@@ -962,7 +998,7 @@ void Parser::parse_internal_dtd_subset(DoctypeDeclaration& dtd) {
 }
 
 void Parser::parse_markup_declaration(DoctypeDeclaration& dtd) {
-    String markup_declaration_type = this->parse_name(WHITESPACE, false);
+    String markup_declaration_type = this->parse_name(WHITESPACE, false, &dtd.parameter_entities);
     if (markup_declaration_type == String("ELEMENT")) {
         this->parse_element_declaration(dtd);
     } else if (markup_declaration_type == String("ATTLIST")) {
@@ -970,7 +1006,7 @@ void Parser::parse_markup_declaration(DoctypeDeclaration& dtd) {
     } else if (markup_declaration_type == String("ENTITY")) {
         this->parse_entity_declaration(dtd);
     } else if (markup_declaration_type == String("NOTATION")) {
-       this->parse_notation_declaration(dtd);
+        this->parse_notation_declaration(dtd);
     } else {
         // Unknown markup declaration type.
         throw;
@@ -978,31 +1014,35 @@ void Parser::parse_markup_declaration(DoctypeDeclaration& dtd) {
 }
 
 void Parser::parse_element_declaration(DoctypeDeclaration& dtd) {
-    this->ignore_whitespace();
+    this->ignore_whitespace(dtd.parameter_entities);
     ElementDeclaration element_declaration;
-    element_declaration.name = this->parse_name(WHITESPACE);
+    element_declaration.name = this->parse_name(WHITESPACE, true, &dtd.parameter_entities);
     // Duplicate declarations for same element name illegal.
     if (dtd.element_declarations.count(element_declaration.name)) {
         throw;
     }
-    this->ignore_whitespace();
+    this->ignore_whitespace(dtd.parameter_entities);
     // Empty, any, children, mixed OR invalid.
-    if (this->get() == LEFT_PARENTHESIS) {
+    if (this->get(dtd.parameter_entities) == LEFT_PARENTHESIS) {
+        int parameter_entity_stack_size = this->parameter_entity_stack.size();
         // Mixed/element content.
         operator++();
-        this->ignore_whitespace();
+        this->ignore_whitespace(dtd.parameter_entities);
         if (this->get(dtd.parameter_entities) == OCTOTHORPE) {
             // Indicates mixed content or invalid.
             element_declaration.type = ElementType::mixed;
-            element_declaration.mixed_content = this->parse_mixed_content_model();
+            element_declaration.mixed_content = this->parse_mixed_content_model(
+                dtd.parameter_entities, parameter_entity_stack_size);
         } else {
             // Indicates element content or invalid.
             element_declaration.type = ElementType::children;
-            element_declaration.element_content = this->parse_element_content_model();
+            element_declaration.element_content = this->parse_element_content_model(
+                dtd.parameter_entities, parameter_entity_stack_size);
         }
     } else {
         // Must be EMPTY or ANY otherwise.
-        String element_type = this->parse_name(WHITESPACE_AND_RIGHT_ANGLE_BRACKET, false);
+        String element_type = this->parse_name(
+            WHITESPACE_AND_RIGHT_ANGLE_BRACKET, false, &dtd.parameter_entities);
         if (element_type == String("EMPTY")) {
             element_declaration.type = ElementType::empty;
         } else if (element_type == String("ANY")) {
@@ -1011,32 +1051,38 @@ void Parser::parse_element_declaration(DoctypeDeclaration& dtd) {
             throw;
         }
     }
-    this->ignore_whitespace();
-    if (this->get() != RIGHT_ANGLE_BRACKET) {
+    this->ignore_whitespace(dtd.parameter_entities);
+    if (this->get(dtd.parameter_entities) != RIGHT_ANGLE_BRACKET) {
         throw;
     }
     operator++();
     dtd.element_declarations[element_declaration.name] = element_declaration;
 }
 
-ElementContentModel Parser::parse_element_content_model() {
+ElementContentModel Parser::parse_element_content_model(
+    const ParameterEntities& parameter_entities, int parameter_entity_stack_size_before
+) {
     ElementContentModel ecm;
     bool separator_seen = false;
     bool separator_next = false;
     while (true) {
-        Char c = this->get();
+        Char c = this->get(parameter_entities);
         if (is_whitespace(c)) {
             operator++();
             continue;
         }
         if (c == RIGHT_PARENTHESIS) {
+            if (this->parameter_entity_stack.size() != parameter_entity_stack_size_before) {
+                // Opening and closing parentheses be in same PE replacement text.
+                throw;
+            }
             operator++();
             // Cannot end on separator - ensure this is not case (also cannot be empty).
             if (!separator_next) {
                 throw;
             }
-            if (ELEMENT_CONTENT_COUNT_SYMBOLS.count(this->get())) {
-                ecm.count = ELEMENT_CONTENT_COUNT_SYMBOLS.at(this->get());
+            if (ELEMENT_CONTENT_COUNT_SYMBOLS.count(this->get(parameter_entities))) {
+                ecm.count = ELEMENT_CONTENT_COUNT_SYMBOLS.at(this->get(parameter_entities));
                 operator++();
             }
             break;
@@ -1066,18 +1112,19 @@ ElementContentModel Parser::parse_element_content_model() {
                 throw;
             }
             if (c == LEFT_PARENTHESIS) {
+                int parameter_entity_stack_size = this->parameter_entity_stack.size();
                 operator++();
-                while (is_whitespace(this->get())) {
-                    operator++();
-                }
-                ecm.parts.push_back(this->parse_element_content_model());
+                this->ignore_whitespace(parameter_entities);
+                ecm.parts.push_back(
+                    this->parse_element_content_model(parameter_entities, parameter_entity_stack_size));
             } else {
                 ElementContentModel sub_ecm;
                 sub_ecm.is_sequence = false;
                 sub_ecm.is_name = true;
-                sub_ecm.name = this->parse_name(ELEMENT_CONTENT_NAME_TERMINATORS);
-                if (ELEMENT_CONTENT_COUNT_SYMBOLS.count(this->get())) {
-                    sub_ecm.count = ELEMENT_CONTENT_COUNT_SYMBOLS.at(this->get());
+                sub_ecm.name = this->parse_name(
+                    ELEMENT_CONTENT_NAME_TERMINATORS, true, &parameter_entities);
+                if (ELEMENT_CONTENT_COUNT_SYMBOLS.count(this->get(parameter_entities))) {
+                    sub_ecm.count = ELEMENT_CONTENT_COUNT_SYMBOLS.at(this->get(parameter_entities));
                     operator++();
                 }
                 ecm.parts.push_back(sub_ecm);
@@ -1088,26 +1135,32 @@ ElementContentModel Parser::parse_element_content_model() {
     return ecm;
 }
 
-MixedContentModel Parser::parse_mixed_content_model() {
+MixedContentModel Parser::parse_mixed_content_model(
+    const ParameterEntities& parameter_entities, int parameter_entity_stack_size_before
+) {
     MixedContentModel mcm;
     bool first = true;
     bool separator_next = false;
     // #
     operator++();
     while (true) {
-        Char c = this->get();
+        Char c = this->get(parameter_entities);
         if (is_whitespace(c)) {
             operator++();
             continue;
         }
         if (c == RIGHT_PARENTHESIS) {
+            if (this->parameter_entity_stack.size() != parameter_entity_stack_size_before) {
+                // Opening and closing parentheses be in same PE replacement text.
+                throw;
+            }
             operator++();
             if (!separator_next) {
                 // Disallow empty MCM without even #PCDATA, or one ending in separator.
                 throw;
             }
             if (!mcm.choices.empty()) {
-                if (this->get() != ASTERISK) {
+                if (this->get(parameter_entities) != ASTERISK) {
                     // MCM actually ends in )* if not empty.
                     throw;
                 }
@@ -1124,7 +1177,8 @@ MixedContentModel Parser::parse_mixed_content_model() {
             if (separator_next) {
                 throw;
             }
-            String name = this->parse_name(MIXED_CONTENT_NAME_TERMINATORS);
+            String name = this->parse_name(
+                MIXED_CONTENT_NAME_TERMINATORS, true, &parameter_entities);
             if (first) {
                 // Must be PCDATA to begin with (excluding octothorpe).
                 if (name != PCDATA) {
@@ -1145,11 +1199,11 @@ MixedContentModel Parser::parse_mixed_content_model() {
 }
 
 void Parser::parse_attribute_list_declaration(DoctypeDeclaration& dtd) {
-    this->ignore_whitespace();
-    String element_name = this->parse_name(WHITESPACE);
-    this->ignore_whitespace();
+    this->ignore_whitespace(dtd.parameter_entities);
+    String element_name = this->parse_name(WHITESPACE, true, &dtd.parameter_entities);
+    this->ignore_whitespace(dtd.parameter_entities);
     while (true) {
-        Char c = this->get();
+        Char c = this->get(dtd.parameter_entities);
         if (is_whitespace(c)) {
             operator++();
             continue;
@@ -1164,33 +1218,34 @@ void Parser::parse_attribute_list_declaration(DoctypeDeclaration& dtd) {
 
 void Parser::parse_attribute_declaration(DoctypeDeclaration& dtd, AttributeListDeclaration& attlist) {
     AttributeDeclaration ad;
-    ad.name = this->parse_name(WHITESPACE);
-    this->ignore_whitespace();
-    if (this->get() == LEFT_PARENTHESIS) {
+    ad.name = this->parse_name(WHITESPACE, true, &dtd.parameter_entities);
+    this->ignore_whitespace(dtd.parameter_entities);
+    if (this->get(dtd.parameter_entities) == LEFT_PARENTHESIS) {
         // Can only be an enumeration.
         ad.type = AttributeType::enumeration;
         operator++();
-        ad.enumeration = this->parse_enumeration();
+        ad.enumeration = this->parse_enumeration(dtd.parameter_entities);
     } else {
-        ad.type = get_attribute_type(this->parse_name(WHITESPACE));
+        ad.type = get_attribute_type(this->parse_name(WHITESPACE, true, &dtd.parameter_entities));
     }
-    this->ignore_whitespace();
+    this->ignore_whitespace(dtd.parameter_entities);
     if (ad.type == AttributeType::notation) {
         operator++();
-        ad.notations = this->parse_notations();
-        this->ignore_whitespace();
+        ad.notations = this->parse_notations(dtd.parameter_entities);
+        this->ignore_whitespace(dtd.parameter_entities);
     }
     if (this->get() == OCTOTHORPE) {
         // Presence indication.
         operator++();
-        String presence = this->parse_name(WHITESPACE_AND_RIGHT_ANGLE_BRACKET);
+        String presence = this->parse_name(
+            WHITESPACE_AND_RIGHT_ANGLE_BRACKET, true, &dtd.parameter_entities);
         ad.presence = get_attribute_presence(presence);
     }
     // Only #FIXED or no presence indication permits a default value.
     if (ad.presence == AttributePresence::fixed || ad.presence == AttributePresence::relaxed) {
-        this->ignore_whitespace();
+        this->ignore_whitespace(dtd.parameter_entities);
         ad.has_default_value = true;
-        ad.default_value = this->parse_attribute_value(dtd);
+        ad.default_value = this->parse_attribute_value(dtd, false);
     }
     // Perform suitable validation possible right now. Uses fallback switch technique.
     // Any attribute type not in the switch does not need validation at this time.
@@ -1246,11 +1301,13 @@ void Parser::parse_attribute_declaration(DoctypeDeclaration& dtd, AttributeListD
     }
 }
 
-std::set<String> Parser::parse_enumerated_attribute(AttributeType att_type) {
+std::set<String> Parser::parse_enumerated_attribute(
+    AttributeType att_type, const ParameterEntities& parameter_entities
+) {
     std::set<String> values;
     bool separator_next = false;
     while (true) {
-        Char c = this->get();
+        Char c = this->get(parameter_entities);
         if (is_whitespace(c)) {
             operator++();
             continue;
@@ -1276,9 +1333,10 @@ std::set<String> Parser::parse_enumerated_attribute(AttributeType att_type) {
             // Notation -> Name, Enumeration -> NmToken
             String value;
             if (att_type == AttributeType::notation) {
-                value = this->parse_name(ENUMERATED_ATTRIBUTE_NAME_TERMINATORS);
+                value = this->parse_name(
+                    ENUMERATED_ATTRIBUTE_NAME_TERMINATORS, true, &parameter_entities);
             } else {
-                value = this->parse_nmtoken(ENUMERATED_ATTRIBUTE_NAME_TERMINATORS);
+                value = this->parse_nmtoken(ENUMERATED_ATTRIBUTE_NAME_TERMINATORS, parameter_entities);
             }
             if (values.count(value)) {
                 // Duplicate enumeration list values prohibited.
@@ -1294,30 +1352,26 @@ std::set<String> Parser::parse_enumerated_attribute(AttributeType att_type) {
     return values;
 }
 
-std::set<String> Parser::parse_notations() {
-    return this->parse_enumerated_attribute(AttributeType::notation);
+std::set<String> Parser::parse_notations(const ParameterEntities& parameter_entities) {
+    return this->parse_enumerated_attribute(AttributeType::notation, parameter_entities);
 }
 
-std::set<String> Parser::parse_enumeration() {
-    return this->parse_enumerated_attribute(AttributeType::enumeration);
+std::set<String> Parser::parse_enumeration(const ParameterEntities& parameter_entities) {
+    return this->parse_enumerated_attribute(AttributeType::enumeration, parameter_entities);
 }
 
 void Parser::parse_entity_declaration(DoctypeDeclaration& dtd) {
     this->ignore_whitespace();
-    if (this->get() == PERCENT_SIGN) {
-        // Parameter entity. At least 1 whitespace must follow '%'.
-        operator++();
-        if (!is_whitespace(this->get())) {
-            throw;
-        }
-        this->ignore_whitespace();
+    if (this->get(dtd.parameter_entities, true, false, true) == PERCENT_SIGN) {
+        // Parameter entity. 1 whitespace followed '%' (see get method).
+        this->ignore_whitespace(dtd.parameter_entities);
         this->parse_parameter_entity_declaration(dtd);
     } else {
         // General entity
         this->parse_general_entity_declaration(dtd);
     }
-    this->ignore_whitespace();
-    if (this->get() != RIGHT_ANGLE_BRACKET) {
+    this->ignore_whitespace(dtd.parameter_entities);
+    if (this->get(dtd.parameter_entities) != RIGHT_ANGLE_BRACKET) {
         throw;
     }
     operator++();
@@ -1325,25 +1379,26 @@ void Parser::parse_entity_declaration(DoctypeDeclaration& dtd) {
 
 void Parser::parse_general_entity_declaration(DoctypeDeclaration& dtd) {
     GeneralEntity ge;
-    ge.name = this->parse_name(WHITESPACE);
-    this->ignore_whitespace();
-    Char quote = this->get();
+    ge.name = this->parse_name(WHITESPACE, true, &dtd.parameter_entities);
+    this->ignore_whitespace(dtd.parameter_entities);
+    Char quote = this->get(dtd.parameter_entities);
     if (quote == SINGLE_QUOTE || quote == DOUBLE_QUOTE) {
         // Has a literal value.
         ge.value = this->parse_entity_value(dtd);
     } else {
         // External entity.
         ge.is_external = true;
-        ge.external_id = this->parse_external_id();
-        this->ignore_whitespace();
-        if (this->get() != RIGHT_ANGLE_BRACKET) {
+        ge.external_id = this->parse_external_id(&dtd.parameter_entities);
+        this->ignore_whitespace(dtd.parameter_entities);
+        if (this->get(dtd.parameter_entities) != RIGHT_ANGLE_BRACKET) {
             // Not done - must be NDATA indication otherwise invalid.
-            if (this->parse_name(WHITESPACE) != String("NDATA")) {
+            if (this->parse_name(WHITESPACE, true, &dtd.parameter_entities) != String("NDATA")) {
                 throw;
             }
-            this->ignore_whitespace();
+            this->ignore_whitespace(dtd.parameter_entities);
             ge.is_unparsed = true;
-            ge.notation_name = this->parse_name(WHITESPACE_AND_RIGHT_ANGLE_BRACKET);
+            ge.notation_name = this->parse_name(
+                WHITESPACE_AND_RIGHT_ANGLE_BRACKET, true, &dtd.parameter_entities);
         }
     }
     if (BUILT_IN_GENERAL_ENTITIES.count(ge.name)) {
@@ -1368,16 +1423,16 @@ void Parser::parse_general_entity_declaration(DoctypeDeclaration& dtd) {
 
 void Parser::parse_parameter_entity_declaration(DoctypeDeclaration& dtd) {
     ParameterEntity pe;
-    pe.name = this->parse_name(WHITESPACE);
-    this->ignore_whitespace();
-    Char quote = this->get();
+    pe.name = this->parse_name(WHITESPACE,true, &dtd.parameter_entities);
+    this->ignore_whitespace(dtd.parameter_entities);
+    Char quote = this->get(dtd.parameter_entities);
     if (quote == SINGLE_QUOTE || quote == DOUBLE_QUOTE) {
         // Has a literal value.
         pe.value = this->parse_entity_value(dtd);
     } else {
         // External entity.
         pe.is_external = true;
-        pe.external_id = this->parse_external_id();
+        pe.external_id = this->parse_external_id(&dtd.parameter_entities);
     }
     if (!dtd.parameter_entities.count(pe.name)) {
         // Only count first instance of parameter entity declaration.
@@ -1386,43 +1441,43 @@ void Parser::parse_parameter_entity_declaration(DoctypeDeclaration& dtd) {
 }
 
 void Parser::parse_notation_declaration(DoctypeDeclaration& dtd) {
-    this->ignore_whitespace();
+    this->ignore_whitespace(dtd.parameter_entities);
     NotationDeclaration nd;
-    nd.name = this->parse_name(WHITESPACE);
+    nd.name = this->parse_name(WHITESPACE, true, &dtd.parameter_entities);
     if (dtd.notation_declarations.count(nd.name)) {
         // Cannot have duplicate notation names.
         throw;
     }
-    this->ignore_whitespace();
-    String type = this->parse_name(WHITESPACE);
-    this->ignore_whitespace();
+    this->ignore_whitespace(dtd.parameter_entities);
+    String type = this->parse_name(WHITESPACE, true, &dtd.parameter_entities);
+    this->ignore_whitespace(dtd.parameter_entities);
     if (type == String("SYSTEM")) {
         nd.has_public_id = false;
         nd.has_system_id = true;
-        nd.system_id = this->parse_system_id();
+        nd.system_id = this->parse_system_id(&dtd.parameter_entities);
     } else if (type == String("PUBLIC")) {
         nd.has_public_id = true;
-        nd.public_id = this->parse_public_id();
+        nd.public_id = this->parse_public_id(&dtd.parameter_entities);
         bool whitespace_seen = false;
-        while (is_whitespace(this->get())) {
+        while (is_whitespace(this->get(dtd.parameter_entities))) {
             operator++();
             whitespace_seen = true;
         }
-        nd.has_system_id = (this->get() != RIGHT_ANGLE_BRACKET);
+        nd.has_system_id = (this->get(dtd.parameter_entities) != RIGHT_ANGLE_BRACKET);
         if (nd.has_system_id) {
             if (!whitespace_seen) {
                 // At least 1 whitespace between public/system ID.
                 throw;
             }
             // System ID is optional but does appear to exist here.
-            nd.system_id = this->parse_system_id();
+            nd.system_id = this->parse_system_id(&dtd.parameter_entities);
         }
     } else {
         // Not SYSTEM or PUBLIC -> invalid.
         throw;
     }
-    this->ignore_whitespace();
-    if (this->get() != RIGHT_ANGLE_BRACKET) {
+    this->ignore_whitespace(dtd.parameter_entities);
+    if (this->get(dtd.parameter_entities) != RIGHT_ANGLE_BRACKET) {
         throw;
     }
     operator++();

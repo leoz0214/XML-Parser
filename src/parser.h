@@ -56,8 +56,9 @@ class Parser {
     bool just_parsed_carriage_return = false;
     bool external_dtd_content_active = false;
 
-    String parse_name(const String&, bool validate = true);
-    String parse_nmtoken(const String&);
+    String parse_name(
+        const String&, bool validate = true, const ParameterEntities* parameter_entities = nullptr);
+    String parse_nmtoken(const String&, const ParameterEntities&);
     String parse_attribute_value(const DoctypeDeclaration&, bool references_active = true);
     String parse_entity_value(const DoctypeDeclaration&);
     Char parse_character_entity();
@@ -74,31 +75,34 @@ class Parser {
     ProcessingInstruction parse_processing_instruction(bool detect_xml_declaration = false);
     void parse_xml_declaration(Document&);
     DoctypeDeclaration parse_doctype_declaration();
-    String parse_public_id();
-    String parse_system_id();
-    ExternalID parse_external_id();
+    String parse_public_id(const ParameterEntities* parameter_entities = nullptr);
+    String parse_system_id(const ParameterEntities* parameter_entities = nullptr);
+    ExternalID parse_external_id(const ParameterEntities* parameter_entities = nullptr);
     void parse_internal_dtd_subset(DoctypeDeclaration&);
     void parse_markup_declaration(DoctypeDeclaration&);
     void parse_element_declaration(DoctypeDeclaration&);
-    ElementContentModel parse_element_content_model();
-    MixedContentModel parse_mixed_content_model();
+    ElementContentModel parse_element_content_model(const ParameterEntities&, int);
+    MixedContentModel parse_mixed_content_model(const ParameterEntities&, int);
     void parse_attribute_list_declaration(DoctypeDeclaration&);
     void parse_attribute_declaration(DoctypeDeclaration&, AttributeListDeclaration&);
-    std::set<String> parse_enumerated_attribute(AttributeType);
-    std::set<String> parse_notations();
-    std::set<String> parse_enumeration();
+    std::set<String> parse_enumerated_attribute(AttributeType, const ParameterEntities&);
+    std::set<String> parse_notations(const ParameterEntities&);
+    std::set<String> parse_enumeration(const ParameterEntities&);
     void parse_entity_declaration(DoctypeDeclaration&);
     void parse_general_entity_declaration(DoctypeDeclaration&);
     void parse_parameter_entity_declaration(DoctypeDeclaration&);
     void parse_notation_declaration(DoctypeDeclaration&);
     Char get();
     Char get(const GeneralEntities&);
-    Char get(const ParameterEntities&, bool in_markup = true, bool in_entity_value = false);
+    Char get(
+        const ParameterEntities&, bool in_markup = true, bool in_entity_value = false,
+        bool ignore_whitespace_after_percent_sign = false);
     void operator++();
     bool eof();
     bool general_entity_eof();
     bool parameter_entity_eof();
     void ignore_whitespace();
+    void ignore_whitespace(const ParameterEntities& parameter_entities);
     Element parse_element(const DoctypeDeclaration&, bool = false);
     public:
         Element parse_element();
