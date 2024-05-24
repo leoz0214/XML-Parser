@@ -1,0 +1,20 @@
+<!-- Include/Ignore section testing. -->
+<!ENTITY % inc "INCLUDE">
+<![ INCLUDE [
+    <!ENTITY a "a">
+    <!ELEMENT ele (a|b|c)>
+    <![IGNORE[
+        <!--Whatever Goes Here Is Ignored No Matter What.-->
+        <!ENTITIE b "b">
+    ]]>
+    <!ATTLIST ele att1 CDATA #REQUIRED>
+    <!ENTITY % ign "IGNORE">
+]]>
+<![%inc;[
+    <!-- Nested Include -->
+    <![%inc;[
+        <!ELEMENT double-inclusion EMPTY>
+    ]]>
+]]>
+<!-- Finally, nested IGNOREs -->
+<![%ign;[<![IGNORE[<![IGNORE[<![IGNORE[<![IGNORE[Deep!]]>]]>]]>]]>]]>

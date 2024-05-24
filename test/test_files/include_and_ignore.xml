@@ -1,0 +1,2 @@
+<!DOCTYPE root SYSTEM "test/test_files/external/cond_sect.xml">
+<root>&a;&a;&a;</root>

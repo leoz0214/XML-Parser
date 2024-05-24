@@ -11,7 +11,7 @@ EntityStream::EntityStream(const String& text) {
 }
 
 EntityStream::EntityStream(const String& file_path, bool) {
-    std::istream* stream_ptr = new std::ifstream(std::string(file_path));
+    std::ifstream* stream_ptr = new std::ifstream(std::string(file_path));
     this->stream = unique_istream_ptr(stream_ptr);
     Parser* parser_ptr = new Parser(*this->stream);
     this->parser = std::unique_ptr<Parser>(parser_ptr);
@@ -129,6 +129,10 @@ void EntityStream::parse_text_declaration() {
         } else {
             throw;
         }
+    }
+    if (!encoding_parsed) {
+        // Encoding is mandatory in external text declaration.
+        throw;
     }
 }
 
@@ -946,17 +950,38 @@ ExternalID Parser::parse_external_id(const ParameterEntities* parameter_entities
     return external_id;
 }
 
-void Parser::parse_internal_dtd_subset(DoctypeDeclaration& dtd) {
+void Parser::parse_dtd_subsets(DoctypeDeclaration& dtd, bool external_subset_started, bool in_include) {
+    int initial_parameter_entity_stack_size = this->parameter_entity_stack.size();
+    // If true, starting straight from external subset (no internal subset).
+    // Otherwise, parse internal subset first, followed by external subset (if exists).
+    if (external_subset_started) {
+        this->start_external_subset(dtd.external_id.system_id);
+    }
     while (true) {
         if (this->parameter_entity_eof()) {
             this->end_parameter_entity();
+            if (external_subset_started) {
+                // End of external subset reached.
+                return;
+            }
         }
         Char c = this->get(dtd.parameter_entities, false);
         operator++();
         if (c == RIGHT_SQUARE_BRACKET) {
-            if (this->parameter_entity_active) {
+            if (this->parameter_entity_stack.size() != initial_parameter_entity_stack_size) {
                 throw;
             }
+            if (
+                !external_subset_started && dtd.external_id.type != ExternalIDType::none 
+                && !in_include
+            ) {
+                initial_parameter_entity_stack_size = this->parameter_entity_stack.size();
+                // Create dummy parameter entity - treat External Subset like one.
+                this->start_external_subset(dtd.external_id.system_id);
+                external_subset_started = true;
+                continue;
+            }
+            // End of internal (subset & no external subset) OR (end of include subset), done.
             return;
         }
         int parameter_entity_stack_size_before = this->parameter_entity_stack.size();
@@ -983,6 +1008,14 @@ void Parser::parse_internal_dtd_subset(DoctypeDeclaration& dtd) {
                 }
                 operator++();
                 this->parse_comment();
+            } else if (this->get() == LEFT_SQUARE_BRACKET) {
+                // Conditional section or invalid.
+                if (!external_subset_started && !in_include) {
+                    // In internal dtd, cannot have conditional section.
+                    throw;
+                }
+                operator++();
+                this->parse_conditional_section(dtd, parameter_entity_stack_size_before);
             } else {
                 // Markup declaration or invalid.
                 this->parse_markup_declaration(dtd);
@@ -991,10 +1024,22 @@ void Parser::parse_internal_dtd_subset(DoctypeDeclaration& dtd) {
             throw;
         }
         int parameter_entity_stack_size_after = this->parameter_entity_stack.size();
-        if (parameter_entity_stack_size_after > parameter_entity_stack_size_before) {
+        if (parameter_entity_stack_size_after != parameter_entity_stack_size_before) {
             throw;
         }
     }
+}
+
+void Parser::start_external_subset(const String& system_id) {
+    // Treat external subset like a special external parameter entity.
+    // External subset and external param entities are actually quite similar,
+    // except external subset MUST be full markup (part of DTD after all).
+    EntityStream parameter_entity(system_id, true);
+    parameter_entity.is_parameter = true;
+    parameter_entity.in_entity_value = false;
+    this->external_dtd_content_active = true;
+    this->parameter_entity_stack.push(std::move(parameter_entity));
+    this->parameter_entity_active = true;
 }
 
 void Parser::parse_markup_declaration(DoctypeDeclaration& dtd) {
@@ -1010,6 +1055,64 @@ void Parser::parse_markup_declaration(DoctypeDeclaration& dtd) {
     } else {
         // Unknown markup declaration type.
         throw;
+    }
+}
+
+void Parser::parse_conditional_section(DoctypeDeclaration& dtd, int parameter_entity_stack_size_before) {
+    this->ignore_whitespace(dtd.parameter_entities);
+    String type = this->parse_name(CONDITIONAL_TYPE_NAME_TERMINATORS, true, &dtd.parameter_entities);
+    this->ignore_whitespace(dtd.parameter_entities);
+    if (
+        this->get() != LEFT_SQUARE_BRACKET ||
+        this->parameter_entity_stack.size() != parameter_entity_stack_size_before
+    ) {
+        throw;
+    }
+    operator++();
+    if (type == String("INCLUDE")) {
+        this->parse_include_section(dtd);
+    } else if (type == String("IGNORE")) {
+        this->parse_ignore_section();
+    } else {
+        // Neither INCLUDE nor IGNORE => Invalid.
+        throw;
+    }
+}
+
+void Parser::parse_include_section(DoctypeDeclaration& dtd) {
+    this->parse_dtd_subsets(dtd, false, true);
+    // Must end on ]]> (first closing right square bracket already registered).
+    if (this->get(dtd.parameter_entities) != RIGHT_SQUARE_BRACKET) {
+        throw;
+    }
+    operator++();
+    if (this->get(dtd.parameter_entities) != RIGHT_ANGLE_BRACKET) {
+        throw;
+    }
+    operator++();
+}
+
+void Parser::parse_ignore_section() {
+    Char prev2 = -1;
+    Char prev = -1;
+    int remaining_closures = 1;
+    // Loop until matching closing part of ignore section reached.
+    while (remaining_closures) {
+        Char c = this->get();
+        operator++();
+        // <!- indicates opening (+1 to count stack).
+        if (c == LEFT_SQUARE_BRACKET && prev == EXCLAMATION_MARK && prev2 == LEFT_ANGLE_BRACKET) {
+            remaining_closures++;
+        }
+        // ]]> indicates closure (-1 to count stack).
+        if (c == RIGHT_ANGLE_BRACKET && prev == RIGHT_SQUARE_BRACKET && prev2 == RIGHT_SQUARE_BRACKET) {
+            remaining_closures--;
+        }
+        if (!valid_character(c)) {
+            throw;
+        }
+        prev2 = prev;
+        prev = c;
     }
 }
 
@@ -1245,7 +1348,7 @@ void Parser::parse_attribute_declaration(DoctypeDeclaration& dtd, AttributeListD
     if (ad.presence == AttributePresence::fixed || ad.presence == AttributePresence::relaxed) {
         this->ignore_whitespace(dtd.parameter_entities);
         ad.has_default_value = true;
-        ad.default_value = this->parse_attribute_value(dtd, false);
+        ad.default_value = this->parse_attribute_value(dtd);
     }
     // Perform suitable validation possible right now. Uses fallback switch technique.
     // Any attribute type not in the switch does not need validation at this time.
@@ -1504,7 +1607,7 @@ DoctypeDeclaration Parser::parse_doctype_declaration() {
             operator++();
             can_parse_external_id = false;
             can_parse_internal_subset = false;
-            this->parse_internal_dtd_subset(dtd);
+            this->parse_dtd_subsets(dtd);
         } else {
             // External ID or invalid.
             if (!can_parse_external_id) {
@@ -1513,6 +1616,10 @@ DoctypeDeclaration Parser::parse_doctype_declaration() {
             can_parse_external_id = false;
             dtd.external_id = this->parse_external_id();
         }
+    }
+    if (can_parse_internal_subset && dtd.external_id.type != ExternalIDType::none) {
+        // Internal subset not provided but parse external subset anyways.
+        this->parse_dtd_subsets(dtd, true);
     }
     return dtd;
 }

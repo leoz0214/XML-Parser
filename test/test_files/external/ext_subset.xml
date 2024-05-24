@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Basic example of an external DTD subset!!! -->
+<!ENTITY % product-contents "(primary-image?, image+, review*)">
+<!ELEMENT product %product-contents;>
+<!ATTLIST product name CDATA #REQUIRED desc CDATA "&quot;Product&quot;" id ID #IMPLIED>
+<!NOTATION Products SYSTEM "products.db">
+<!ENTITY img-ext ".png">
+<?processor prod_proc.exe?>
+<!-- END OF EXTERNAL DTD SUBSET-->

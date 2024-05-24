@@ -1,0 +1,15 @@
+<?xml version="1.0"?>
+<!-- Only external subset no internal subset. Sanity test in a way -->
+<!DOCTYPE products SYSTEM "test/test_files/external/ext_subset.xml">
+<products>
+    <!-- List of Products!!! MADE UP OF COURSE! -->
+    <product name="XML Parser" desc="Parse XML" id="123">
+        <primary-image href="xml-parser&img-ext;"/>
+        <image href="example&img-ext;"/>
+        <review stars="3">If it works, it works.</review>
+    </product>
+    <product name="Burger" desc="Chicken" id="222">
+        <primary-image href="chk-bgr&img-ext;"/>
+        <review stars="5">Juicy.</review>
+    </product>
+</products>

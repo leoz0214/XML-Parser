@@ -334,6 +334,12 @@ static String DOCTYPE_DECLARATION_ROOT_NAME_TERMINATORS = []() {
     return valid_chars;
 }();
 
+static String CONDITIONAL_TYPE_NAME_TERMINATORS = []() {
+    String valid_chars(WHITESPACE.begin(), WHITESPACE.end());
+    valid_chars.push_back(LEFT_SQUARE_BRACKET);
+    return valid_chars;
+}();
+
 // Ultimate document class - contains everything about the XML document.
 struct Document {
     String version = "1.0";

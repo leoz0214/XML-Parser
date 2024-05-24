@@ -78,8 +78,12 @@ class Parser {
     String parse_public_id(const ParameterEntities* parameter_entities = nullptr);
     String parse_system_id(const ParameterEntities* parameter_entities = nullptr);
     ExternalID parse_external_id(const ParameterEntities* parameter_entities = nullptr);
-    void parse_internal_dtd_subset(DoctypeDeclaration&);
+    void parse_dtd_subsets(DoctypeDeclaration&, bool = false, bool = false);
+    void start_external_subset(const String&);
     void parse_markup_declaration(DoctypeDeclaration&);
+    void parse_conditional_section(DoctypeDeclaration&, int);
+    void parse_include_section(DoctypeDeclaration&);
+    void parse_ignore_section();
     void parse_element_declaration(DoctypeDeclaration&);
     ElementContentModel parse_element_content_model(const ParameterEntities&, int);
     MixedContentModel parse_mixed_content_model(const ParameterEntities&, int);

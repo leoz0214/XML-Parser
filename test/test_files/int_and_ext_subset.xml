@@ -1,0 +1,9 @@
+<!-- Mixing internal and external subset now! Overriding testing -->
+<!DOCTYPE products SYSTEM "test/test_files/external/ext_subset.xml" [
+    <!ENTITY % product-contents "(image*, video*, audio*)">
+    <!ATTLIST product desc CDATA "N/A">
+    <!ENTITY img-ext ".jpg">
+]>
+<products>
+    <product name="Game64" desc="8x8 Puzzles" id="404">
+        <image href="gm64&img-ext;"/></product></products>

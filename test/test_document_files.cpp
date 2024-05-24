@@ -91,4 +91,38 @@ int main() {
         assert((decls.at("my-notation").public_id == String("Notation")));
         assert((decls.at("Example").system_id == String(" PUBLIC ")));
     });
+    test_document_file("ext_subset.xml", [](const Document& document) {
+        auto dtd = document.doctype_declaration;
+        assert((dtd.element_declarations.at("product").element_content.parts.size() == 3));
+        assert((dtd.attribute_list_declarations.at("product")
+            .at("desc").default_value == String("\"Product\"")));
+        assert((dtd.notation_declarations.at("Products").system_id == String("products.db")));
+        assert((dtd.processing_instructions.at(0).instruction == String("prod_proc.exe")));
+        Element root = document.root;
+        assert((root.children.size() == 2));
+        assert((root.children.at(0).tag.attributes.at("name") == String("XML Parser")));
+        assert((root.children.at(0).children.at(0).
+            tag.attributes.at("href") == String("xml-parser.png")));
+        assert((root.children.at(0).children.at(2).text == String("If it works, it works.")));
+        assert((root.children.at(1).tag.attributes.at("id") == String("222")));
+    });
+    test_document_file("int_and_ext_subset.xml", [](const Document& document) {
+        auto dtd = document.doctype_declaration;
+        assert((dtd.element_declarations.at("product")
+            .element_content.parts.at(1).name == String("video")));
+        assert((dtd.attribute_list_declarations.at("product").size() == 3));
+        assert((dtd.attribute_list_declarations.at("product")
+            .at("desc").default_value == String("N/A")));
+        Element product = document.root.children.at(0);
+        assert((product.tag.attributes.at("name") == String("Game64")));
+        assert((product.children.at(0).tag.attributes.at("href") == String("gm64.jpg")));
+    });
+    test_document_file("include_and_ignore.xml", [](const Document& document) {
+        auto dtd = document.doctype_declaration;
+        assert((document.root.text == String("aaa")));
+        assert((dtd.element_declarations.at("ele").element_content.parts.size() == 3));
+        assert((dtd.element_declarations.at("double-inclusion").type == ElementType::empty));
+        assert((dtd.attribute_list_declarations.at("ele").at("att1")
+            .presence == AttributePresence::required));
+    });
 }
