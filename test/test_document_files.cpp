@@ -21,13 +21,13 @@ const std::string FOLDER = "test/test_files";
 
 typedef std::function<void(const Document&)> TestDocument;
 unsigned test_number = 0;
-void test_document_file(const std::string& filename, TestDocument callback) {
+void test_document_file(const std::string& filename, TestDocument callback, bool validate_elements = true) {
     std::string file_path = FOLDER + "/" + filename;
     std::ifstream file(file_path);
     if (!file.is_open()) {
         throw std::runtime_error(filename + " not found");
     }
-    Document document = Parser(file).parse_document();
+    Document document = Parser(file).parse_document(validate_elements);
     callback(document);
     std::cout << "Document File Test " << test_number++ << " passed.\n";
 }
@@ -53,12 +53,12 @@ int main() {
         Element child = document.root.children.at(3);
         assert((child.children.size() == 1));
         assert((child.children.at(0).text == String("&&&")));
-    });
+    }, false);
     test_document_file("parameter.xml", [](const Document& document) {
         assert((document.root.text.size() == 24));
         assert((document.doctype_declaration.processing_instructions.at(0).target
             == String("param-pi")));
-    });
+    }, false);
     test_document_file("element_decls.xml", [](const Document& document) {
         auto elements = document.doctype_declaration.element_declarations;
         assert((elements.at("my-element").element_content.parts.size() == 3));
@@ -78,19 +78,19 @@ int main() {
         assert((decl.at("identifier").type == AttributeType::id));
         assert((decl.at("atts").default_value == String("abc def ghi")));
         assert((decl.at("level").enumeration.size() == 3));
-    });
+    }, false);
     test_document_file("entity_decls.xml", [](const Document& document) {
         auto p = document.doctype_declaration.parameter_entities;
         auto g = document.doctype_declaration.general_entities;
         assert((p.at("ccc").value == String("'This is ccc BTW")));
         assert((g.at("x").value == String("This is ccc BTW !!!!")));
         assert((g.at("abc").external_id.public_id == String(" ccc ")));
-    });
+    }, false);
     test_document_file("notation_decls.xml", [](const Document& document) {
         auto decls = document.doctype_declaration.notation_declarations;
         assert((decls.at("my-notation").public_id == String("Notation")));
         assert((decls.at("Example").system_id == String(" PUBLIC ")));
-    });
+    }, false);
     test_document_file("ext_subset.xml", [](const Document& document) {
         auto dtd = document.doctype_declaration;
         assert((dtd.element_declarations.at("product").element_content.parts.size() == 3));
@@ -105,7 +105,7 @@ int main() {
             tag.attributes.at("href") == String("xml-parser.png")));
         assert((root.children.at(0).children.at(2).text == String("If it works, it works.")));
         assert((root.children.at(1).tag.attributes.at("id") == String("222")));
-    });
+    }, false);
     test_document_file("int_and_ext_subset.xml", [](const Document& document) {
         auto dtd = document.doctype_declaration;
         assert((dtd.element_declarations.at("product")
@@ -116,7 +116,7 @@ int main() {
         Element product = document.root.children.at(0);
         assert((product.tag.attributes.at("name") == String("Game64")));
         assert((product.children.at(0).tag.attributes.at("href") == String("gm64.jpg")));
-    });
+    }, false);
     test_document_file("include_and_ignore.xml", [](const Document& document) {
         auto dtd = document.doctype_declaration;
         assert((document.root.text == String("aaa")));
@@ -124,5 +124,5 @@ int main() {
         assert((dtd.element_declarations.at("double-inclusion").type == ElementType::empty));
         assert((dtd.attribute_list_declarations.at("ele").at("att1")
             .presence == AttributePresence::required));
-    });
+    }, false);
 }

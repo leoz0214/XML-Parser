@@ -110,7 +110,7 @@ class Parser {
     Element parse_element(const DoctypeDeclaration&, bool = false);
     public:
         Element parse_element();
-        Document parse_document();
+        Document parse_document(bool validate_elements = false);
         Parser(const std::string&);
         Parser(std::istream&);
 };

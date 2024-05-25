@@ -1,4 +1,7 @@
 <!DOCTYPE root [
     <!ENTITY % elements SYSTEM "test/test_files/external/pe_in_element_decl.xml">
     %elements;
-]><root></root>
+]><root>
+<ex2><abc>xxx<ul></ul>xxx</abc></ex2>
+<ex2></ex2>
+</root>

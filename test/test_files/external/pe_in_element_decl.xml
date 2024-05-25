@@ -5,8 +5,11 @@
 <!ENTITY % pe4 "widgets (widget)*">
 <!ENTITY % pe5 "ul|b|i">
 <!ENTITY % pe6 " EMPTY ">
+<!ENTITY % pe7 "ANY">
+<!ELEMENT root%pe7;>
 <!ELEMENT%pe1;%pe2;>
-<!ELEMENT ex2 (%pe3; | def)>
+<!ELEMENT ex2 (%pe3; | def)?>
 <!ELEMENT %pe4;   >
 <!ELEMENT p (#PCDATA|a|%pe5;|em)*>
 <!ELEMENT metadata %pe6;>
+<!ELEMENT abc ANY><!ELEMENT def ANY><!ELEMENT ul ANY>

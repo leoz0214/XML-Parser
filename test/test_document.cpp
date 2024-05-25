@@ -11,8 +11,8 @@ using namespace xml;
 
 typedef std::function<void(const Document&)> TestDocument;
 unsigned test_number = 0;
-void test_document(const std::string& string, TestDocument callback) {
-    Document document = Parser(string).parse_document();
+void test_document(const std::string& string, TestDocument callback, bool validate_elements = true) {
+    Document document = Parser(string).parse_document(validate_elements);
     callback(document);
     std::cout << "Document Test " << test_number++ << " passed.\n";
 }
@@ -62,15 +62,15 @@ int main() {
         assert((dtd.external_id.type == ExternalIDType::public_));
         assert((dtd.external_id.public_id == String("'public id 123!'.xml")));
         assert((dtd.external_id.system_id == String("systemid321.lmx")));
-    });
+    }, false);
     test_document("<!DOCTYPE x SYSTEM 'y'><x></x>", [](const Document& document) {
         assert((document.doctype_declaration.external_id.type == ExternalIDType::system));
         assert((document.doctype_declaration.external_id.system_id == String("y")));
-    });
+    }, false);
     test_document("<!DOCTYPE minimal><minimal></minimal>", [](const Document& document) {
         assert((document.doctype_declaration.external_id.type == ExternalIDType::none));
         assert((document.root.text.empty()));
-    });
+    }, false);
     test_document(R"(<!DOCTYPE r PUBLIC 'p' 's' [
         <!-- Internal DTD basic checking... this should pass -->
             <?doc-pi DoctypePI?>
@@ -82,19 +82,30 @@ int main() {
         assert((dtd.external_id.system_id == String("s")));
         assert((dtd.processing_instructions[0].target == String("doc-pi")));
         assert((document.root.tag.name == String("r")));
-    });
+    }, false);
     test_document(R"(<?xml version='1.0' encoding='utf-8'?>
         <!DOCTYPE root [
+            <!ELEMENT root ANY>
             <!ELEMENT e EMPTY>
-            <!ELEMENT    a    ANY    >
+            <!ELEMENT    a    ANY    ><!ELEMENT front ANY><!ELEMENT body ANY><!ELEMENT back ANY>
             <!ELEMENT spec (front, body, back?)>
-            <!ELEMENT div1 ( head, (  p | list+ | note)*, div2*)>
+            <!ELEMENT head ANY><!ELEMENT list ANY><!ELEMENT div2 ANY>
+            <!ELEMENT div1 ( head, (  p | list+ | note)*, div2*, (no-deadlock?)*)>
             <!ELEMENT  p (#PCDATA|a|ul|b|i|em)*>
             <!ELEMENT b       ( #PCDATA )>
-        ]><root>Testing element entity declarations</root>
+        ]><root>
+            <!-- Testing the above entity declarations. -->
+            <e/>
+            <p><a>
+                Can contain char data
+                <spec><front/><body/></spec>
+                <b>Can contain char data</b>
+                <div1>
+                    <head/><list/><list/><list/><div2/><div2/></div1>
+            </a></p>
+        </root>
     )", [](const Document& document) {
         auto element_decls = document.doctype_declaration.element_declarations;
-        assert((element_decls.size() == 6));
         assert((element_decls.at("e").type == ElementType::empty));
         assert((element_decls.at("a").type == ElementType::any));
         ElementDeclaration spec = element_decls.at("spec");
@@ -106,7 +117,7 @@ int main() {
         assert((spec.element_content.parts.at(0).count == ElementContentCount::one));
         assert((spec.element_content.parts.at(2).count == ElementContentCount::zero_or_one));
         ElementDeclaration div1 = element_decls.at("div1");
-        assert((div1.element_content.parts.size() == 3));
+        assert((div1.element_content.parts.size() == 4));
         ElementContentModel div1_1 = div1.element_content.parts.at(1);
         assert((div1_1.count == ElementContentCount::zero_or_more));
         assert((div1_1.parts.size() == 3));
@@ -133,7 +144,7 @@ int main() {
         assert((notations.at("n2").system_id == String("N2")));
         assert((!notations.at("n3").has_system_id));
         assert((notations.at("n3").public_id == String("Notation3")));
-    });
+    }, false);
     test_document(R"(<?xml version='1.11' encoding='UTF-8'?>
         <!--Attribute list declarations sanity check.-->
         <!DOCTYPE root [
@@ -162,7 +173,7 @@ int main() {
         AttributeListDeclaration form = attlists.at("form");
         assert((form.at("method").presence == AttributePresence::fixed));
         assert((form.at("method").default_value == String("POST")));
-    });
+    }, false);
     test_document(R"(<?xml version='1.00' encoding='utf-8'?>
         <!--Attribute list declarations: more diverse checks-->
         <!DOCTYPE root [
@@ -193,7 +204,7 @@ int main() {
         assert((nota.at("a").notations.size() == 3));
         assert((nota.at("a").presence == AttributePresence::fixed));
         assert((nota.at("a").default_value == String("c")));
-    });
+    }, false);
     test_document(R"(<!DOCTYPE root [
         <!-- Testing General Entity Declarations -->
         <!ENTITY g1 "value1">
@@ -222,7 +233,7 @@ int main() {
         assert((general_entities.at("hatch-pic").is_external));
         assert((general_entities.at("hatch-pic").is_unparsed));
         assert((general_entities.at("hatch-pic").notation_name == String("gif")));
-    });
+    }, false);
     test_document(R"(<!DOCTYPE root [
         <!-- Testing Parameter Entity Declarations -->
         <!ENTITY % p1 "value1">
@@ -240,7 +251,7 @@ int main() {
         assert((param_entities.at("ISOLat2").external_id.type == ExternalIDType::system));
         assert((param_entities.at("ISOLat2").external_id.system_id ==
             String("http://www.xml.com/iso/isolat2-xml.entities")));
-    });
+    }, false);
     test_document(R"(<!DOCTYPE root [
         <!-- Parameter Entity Usage Very Basic Test -->
         <!ENTITY % att1 " <!ATTLIST a b CDATA '123'> ">
@@ -257,7 +268,7 @@ int main() {
         assert((dtd.element_declarations.size() == 2));
         assert((dtd.attribute_list_declarations.size() == 1));
         assert((dtd.attribute_list_declarations.at("a").at("b").default_value == String("123")));
-    });
+    }, false);
     test_document(R"(<!DOCTYPE root [
         <!-- Parameter Entities in Entity Values TEST -->
         <!ENTITY % a "1'2'3" >
@@ -273,7 +284,7 @@ int main() {
         assert((parameter_entities.at("b").value == String("0'1'2'3'4")));
         assert((parameter_entities.at("c").value == String("0'1'2'3'4")));
         assert((gen_entities.at("a").value == String("Counting: 0'1'2'3'4!")));
-    });
+    }, false);
     test_document(R"(<!DOCTYPE root [
         <!-- Character/General REFERENCES in ENTITY VALUES -->
         <!ENTITY x "a&#98;&#x63;d">
@@ -285,7 +296,7 @@ int main() {
         auto gen_entities = document.doctype_declaration.general_entities;
         assert((gen_entities.at("x").value == String("abcd")));
         assert((gen_entities.at("z").value == String("&x;efghijk")));
-    });
+    }, false);
     test_document(R"(<!DOCTYPE countries [
         <!-- Entities in attributes - test -->
         <!ENTITY eur "E&#117;r">
@@ -311,7 +322,7 @@ int main() {
         assert((root.children.at(1).tag.attributes.at("continent") == String("Asia")));
         assert((root.children.at(1).tag.attributes.at("capital") == String("Tokyo")));
         assert((root.children.at(2).tag.attributes.at("continent") == String("Africa")));
-    });
+    }, false);
     test_document(R"(<!DOCTYPE root [
         <!-- Entity reference ABUSE -->
         <!ENTITY a "a">
@@ -325,7 +336,7 @@ int main() {
     ]><root att="&a;&b;&c;&d;&e;&f;&g;&h;"></root>)", [](const Document& document) {
         assert((document.root.tag.attributes.at("att").size() ==
             1 + 2 + 6 + 24 + 120 + 720 + 5040 + 40320));
-    });
+    }, false);
     std::cout << "Checkpoint\n";
     test_document(R"(<!DOCTYPE root [
         <!-- Taken straight from the standard. -->
@@ -335,7 +346,7 @@ int main() {
         assert((document.doctype_declaration.general_entities.at("example").value 
             == String("[&#38;][&#38;#38;][&amp;amp;]")));
         assert((document.root.tag.attributes.at("att") == String("[&][&#38;][&amp;]")));
-    });
+    }, false);
     test_document(R"(<!DOCTYPE root [
         <!-- Testing explicit built-in entity declarations! -->
         <!ENTITY lt "&#x26;#x03C;">
@@ -345,7 +356,7 @@ int main() {
         <!ENTITY quot "&#000000000000000000034;">
     ]><root all="&lt;&gt;&amp;&apos;&quot;"></root>)", [](const Document& document) {
         assert((document.root.tag.attributes.at("all") == String("<>&'\"")));
-    });
+    }, false);
     test_document(R"(<?xml version='1.0'?>
         <!DOCTYPE test [
         <!ELEMENT test (#PCDATA) >
@@ -355,7 +366,7 @@ int main() {
     )", [](const Document& document) {
         assert((document.root.tag.attributes.at("att")
             == String("This sample shows a error-prone method.")));
-    });
+    }, false);
     test_document(R"(
         <!DOCTYPE root [
             <!ENTITY d "&#xD;">
@@ -370,7 +381,7 @@ xyz" b="&d;&d;A&a;&#x20;&a;B&da;" c="&#xd;&#xd;A&#xa;&#xa;B&#xd;&#xa;&t;&t;"></r
         assert((attributes.at("a") == String("  xyz")));
         assert((attributes.at("b") == String("  A   B  ")));
         assert((attributes.at("c") == String("\r\rA\n\nB\r\n  ")));
-    });
+    }, false);
     test_document(R"(<?xml version="1.0" encoding="utf-8"?>
         <!DOCTYPE activities [
             <!-- If this document is correctly parsed,
@@ -400,7 +411,7 @@ xyz" b="&d;&d;A&a;&#x20;&a;B&da;" c="&#xd;&#xd;A&#xa;&#xa;B&#xd;&#xa;&t;&t;"></r
             assert((activity.tag.attributes.at("distance") == distances[i]));
             assert((activity.text == titles[i]));
         }
-    });
+    }, false);
     test_document(R"(
         <!DOCTYPE root [
             <!-- It's not looking great now - markup in entity references! -->
@@ -411,5 +422,5 @@ xyz" b="&d;&d;A&a;&#x20;&a;B&da;" c="&#xd;&#xd;A&#xa;&#xa;B&#xd;&#xa;&t;&t;"></r
         assert((document.root.text == String("Extremely bad situation here!ABC")));
         assert((document.root.children.size() == 3));
         assert((document.root.children.at(1).tag.attributes.at("c") == String("d")));
-    });
+    }, false);
 }

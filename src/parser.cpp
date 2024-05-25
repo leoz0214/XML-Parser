@@ -1,4 +1,5 @@
 #include "parser.h"
+#include "validate.h"
 #include <fstream>
 #include <iostream>
 
@@ -724,6 +725,7 @@ Element Parser::parse_element(const DoctypeDeclaration& dtd, bool allow_end) {
             element.text.insert(element.text.end(), char_data.begin(), char_data.end());
             element.text.push_back(c);
             char_data.clear();
+            element.is_empty = false;
             continue;
         }
         switch (c) {
@@ -806,6 +808,7 @@ Element Parser::parse_element(const DoctypeDeclaration& dtd, bool allow_end) {
                 operator++();
                 char_data.push_back(c);
         }
+        element.is_empty = false;
     }
     done:;
     // General entities not properly closed.
@@ -1624,7 +1627,7 @@ DoctypeDeclaration Parser::parse_doctype_declaration() {
     return dtd;
 }
 
-Document Parser::parse_document() {
+Document Parser::parse_document(bool validate_elements) {
     Document document;
     // IMPORTANT - XML declaration MUST be the very first thing in the document
     // or else cannot be included. NOT EVEN WHITESPACE BEFORE IT.
@@ -1701,6 +1704,10 @@ Document Parser::parse_document() {
     if (!root_seen) {
         // No root element seen - invalid doc.
         throw;
+    }
+    // Only validate document if DTD given - otherwise be lenient.
+    if (document.doctype_declaration.exists) {
+        validate_document(document, validate_elements);
     }
     return document;
 }

@@ -1,6 +1,7 @@
 // General utilities for the parser.
 #pragma once
 #include <algorithm>
+#include <climits>
 #include <initializer_list>
 #include <map>
 #include <istream>
@@ -173,6 +174,7 @@ struct Element {
     Tag tag;
     std::vector<Element> children;
     std::vector<ProcessingInstruction> processing_instructions;
+    bool is_empty = true;
 };
 
 // External ID for external entities.
@@ -220,6 +222,14 @@ struct ElementDeclaration {
 static std::map<Char, ElementContentCount> ELEMENT_CONTENT_COUNT_SYMBOLS {
     {QUESTION_MARK, ElementContentCount::zero_or_one},
     {ASTERISK, ElementContentCount::zero_or_more}, {PLUS, ElementContentCount::one_or_more}
+};
+static std::map<ElementContentCount, int> ELEMENT_CONTENT_COUNT_MINIMA {
+    {ElementContentCount::one, 1}, {ElementContentCount::one_or_more, 1},
+    {ElementContentCount::zero_or_one, 0}, {ElementContentCount::zero_or_more, 0}
+};
+static std::map<ElementContentCount, int> ELEMENT_CONTENT_COUNT_MAXIMA {
+    {ElementContentCount::one, 1}, {ElementContentCount::one_or_more, INT_MAX},
+    {ElementContentCount::zero_or_one, 1}, {ElementContentCount::zero_or_more, INT_MAX}
 };
 static String ELEMENT_CONTENT_NAME_TERMINATORS = []() {
     String valid_chars(WHITESPACE.begin(), WHITESPACE.end());
@@ -308,6 +318,7 @@ struct NotationDeclaration {
 
 // Stores info about the DOCTYPE declaration, if any.
 // A DTD is optional - if not provided, assume zero restrictions on actual elements.
+typedef std::map<String, ElementDeclaration> ElementDeclarations;
 typedef std::map<String, GeneralEntity> GeneralEntities;
 typedef std::map<String, ParameterEntity> ParameterEntities;
 static GeneralEntities BUILT_IN_GENERAL_ENTITIES {
@@ -320,7 +331,7 @@ struct DoctypeDeclaration {
     String root_name;
     ExternalID external_id;
     std::vector<ProcessingInstruction> processing_instructions;
-    std::map<String, ElementDeclaration> element_declarations;
+    ElementDeclarations element_declarations;
     std::map<String, AttributeListDeclaration> attribute_list_declarations;
     GeneralEntities general_entities = BUILT_IN_GENERAL_ENTITIES;
     ParameterEntities parameter_entities;
