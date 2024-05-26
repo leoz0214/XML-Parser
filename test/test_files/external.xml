@@ -1,5 +1,6 @@
 <!-- IMPORTANT - must run exe in root of project -->
 <!DOCTYPE root [
+    <!ATTLIST example att CDATA #IMPLIED>
     <!ENTITY external SYSTEM "test/test_files/external/basic.xml">
     <!ENTITY ampersands SYSTEM "test/test_files/external/with_text_decl.xml">
 ]>

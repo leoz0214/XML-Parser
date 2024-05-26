@@ -308,7 +308,7 @@ String Parser::parse_nmtoken(const String& until, const ParameterEntities& param
     return nmtoken;
 }
 
-String Parser::parse_attribute_value(const DoctypeDeclaration& dtd, bool references_active) {
+String Parser::parse_attribute_value(const DoctypeDeclaration& dtd, bool references_active, bool is_cdata) {
     // Ensure opening quote (double or single accepted).
     Char quote = this->get();
     if (quote != SINGLE_QUOTE && quote != DOUBLE_QUOTE) {
@@ -333,7 +333,7 @@ String Parser::parse_attribute_value(const DoctypeDeclaration& dtd, bool referen
                 if (!this->just_parsed_character_reference && !valid_attribute_value_character(c)) {
                     throw;
                 }
-                if (is_whitespace(c)) {
+                if (is_whitespace(c) && !this->just_parsed_character_reference) {
                     value.push_back(SPACE);
                 } else {
                     value.push_back(c);
@@ -358,6 +358,24 @@ String Parser::parse_attribute_value(const DoctypeDeclaration& dtd, bool referen
         } else {
             value.push_back(c);
         }
+    }
+    if (!is_cdata) {
+        // If not cdata, further normalisation is required.
+        // Discard leading/trailing spaces and ensure no spaces are adjacent.
+        auto non_space_begin = std::find_if(value.begin(), value.end(), [](Char c) {
+            return c != SPACE;
+        });
+        auto non_space_end = std::find_if(value.rbegin(), value.rend(), [](Char c) {
+            return c != SPACE;
+        }).base();
+        String normalised;
+        normalised.reserve(non_space_end - non_space_begin);
+        for (auto it = non_space_begin; it != non_space_end; ++it) {
+            if (*it != SPACE || *(it - 1) != SPACE) {
+                normalised.push_back(*it);
+            }
+        }
+        value = std::move(normalised);
     }
     return value;
 }
@@ -540,7 +558,9 @@ void Parser::end_parameter_entity() {
     this->external_dtd_content_active = false;
 }
 
-std::pair<String, String> Parser::parse_attribute(const DoctypeDeclaration& dtd, bool references_active) {
+std::pair<String, String> Parser::parse_attribute(
+    const DoctypeDeclaration& dtd, bool references_active, bool is_cdata, const String* tag_name
+) {
     String name = this->parse_name(ATTRIBUTE_NAME_TERMINATORS);
     // Ignore whitespace until '=' is reached.
     this->ignore_whitespace();
@@ -550,7 +570,17 @@ std::pair<String, String> Parser::parse_attribute(const DoctypeDeclaration& dtd,
     // Increment the '='
     operator++();
     this->ignore_whitespace();
-    String value = this->parse_attribute_value(dtd, references_active);
+    if (!is_cdata) {
+        // CDATA not forced - only CDATA if attribute not declared
+        // or attribute is declared as CDATA, for the given element.
+        is_cdata = tag_name != nullptr && (
+            !dtd.attribute_list_declarations.count(*tag_name)
+            || (
+                dtd.attribute_list_declarations.at(*tag_name).count(name)
+                && dtd.attribute_list_declarations.at(*tag_name).at(name).type == AttributeType::cdata)
+        );
+    }
+    String value = this->parse_attribute_value(dtd, references_active, is_cdata);
     return {name, value};
 }
 
@@ -596,12 +626,20 @@ Tag Parser::parse_tag(const DoctypeDeclaration& dtd) {
                 continue;
             }
             // Not end or whitespace, so must be an attribute.
-            std::pair<String, String> attribute = this->parse_attribute(dtd);
+            std::pair<String, String> attribute = this->parse_attribute(dtd, true, false, &tag.name);
             if (tag.attributes.count(attribute.first)) {
                 // Duplicate attribute names in same element prohibited.
                 throw;
             }
             tag.attributes.insert(attribute);
+        }
+    }
+    if (dtd.attribute_list_declarations.count(tag.name)) {
+        // Add default values if available. No validation here at all. That is for later.
+        for (const auto& [attribute_name, attribute] : dtd.attribute_list_declarations.at(tag.name)) {
+            if (!tag.attributes.count(attribute_name) && attribute.has_default_value) {
+                tag.attributes[attribute_name] = attribute.default_value;
+            }
         }
     }
     return tag;
@@ -1340,7 +1378,7 @@ void Parser::parse_attribute_declaration(DoctypeDeclaration& dtd, AttributeListD
         ad.notations = this->parse_notations(dtd.parameter_entities);
         this->ignore_whitespace(dtd.parameter_entities);
     }
-    if (this->get() == OCTOTHORPE) {
+    if (this->get(dtd.parameter_entities) == OCTOTHORPE) {
         // Presence indication.
         operator++();
         String presence = this->parse_name(
@@ -1351,60 +1389,15 @@ void Parser::parse_attribute_declaration(DoctypeDeclaration& dtd, AttributeListD
     if (ad.presence == AttributePresence::fixed || ad.presence == AttributePresence::relaxed) {
         this->ignore_whitespace(dtd.parameter_entities);
         ad.has_default_value = true;
-        ad.default_value = this->parse_attribute_value(dtd);
-    }
-    // Perform suitable validation possible right now. Uses fallback switch technique.
-    // Any attribute type not in the switch does not need validation at this time.
-    switch (ad.type) {
-        case AttributeType::id:
-            // Must be #REQUIRED or #IMPLIED.
-            if (ad.presence != AttributePresence::required && ad.presence != AttributePresence::implied) {
-                throw;
-            }
-            break;
-        case AttributeType::idref:
-        case AttributeType::entity:
-            // Default value must match Name.
-            if (ad.has_default_value && !valid_name(ad.default_value, true)) {
-                throw;
-            }
-            break;
-        case AttributeType::idrefs:
-        case AttributeType::entities:
-            // Default value must match Names.
-            if (ad.has_default_value && !valid_names(ad.default_value)) {
-                throw;
-            }
-            break;
-        case AttributeType::nmtoken:
-            // Default value must match Nmtoken.
-            if (ad.has_default_value && !valid_nmtoken(ad.default_value)) {
-                throw;
-            }
-            break;
-        case AttributeType::nmtokens:
-            // Default value must match Nmtokens.
-            if (ad.has_default_value && !valid_nmtokens(ad.default_value)) {
-                throw;
-            }
-            break;
-        case AttributeType::notation:
-            // Default value must be one of the notations in the enumeration list.
-            if (ad.has_default_value && !ad.notations.count(ad.default_value)) {
-                throw;
-            }
-            break;
-        case AttributeType::enumeration:
-            // Default value must be one of the enumeration values.
-            if (ad.has_default_value && !ad.enumeration.count(ad.default_value)) {
-                throw;
-            }
-            break;
+        ad.default_value = this->parse_attribute_value(dtd, true, false);
     }
     // If the same attribute name is declared multiple times, only the first one counts.
-    if (!attlist.count(ad.name)) {
-        attlist[ad.name] = ad;
+    // Ignore repeat declaration. Be lenient and do not even validate (assume this is right).
+    if (attlist.count(ad.name)) {
+        return;
     }
+    // Register for now, validate later.
+    attlist[ad.name] = ad;
 }
 
 std::set<String> Parser::parse_enumerated_attribute(
@@ -1593,9 +1586,7 @@ void Parser::parse_notation_declaration(DoctypeDeclaration& dtd) {
 DoctypeDeclaration Parser::parse_doctype_declaration() {
     DoctypeDeclaration dtd;
     dtd.exists = true;
-    while (is_whitespace(this->get())) {
-        operator++();
-    }
+    this->ignore_whitespace();
     dtd.root_name = this->parse_name(DOCTYPE_DECLARATION_ROOT_NAME_TERMINATORS);
     bool can_parse_external_id = true;
     bool can_parse_internal_subset = true;
@@ -1624,10 +1615,12 @@ DoctypeDeclaration Parser::parse_doctype_declaration() {
         // Internal subset not provided but parse external subset anyways.
         this->parse_dtd_subsets(dtd, true);
     }
+    // Validate attribute list declaration after entire DTD parsed.
+    validate_attribute_list_declarations(dtd);
     return dtd;
 }
 
-Document Parser::parse_document(bool validate_elements) {
+Document Parser::parse_document(bool validate_elements, bool validate_attributes) {
     Document document;
     // IMPORTANT - XML declaration MUST be the very first thing in the document
     // or else cannot be included. NOT EVEN WHITESPACE BEFORE IT.
@@ -1707,7 +1700,7 @@ Document Parser::parse_document(bool validate_elements) {
     }
     // Only validate document if DTD given - otherwise be lenient.
     if (document.doctype_declaration.exists) {
-        validate_document(document, validate_elements);
+        validate_document(document, validate_elements, validate_attributes);
     }
     return document;
 }

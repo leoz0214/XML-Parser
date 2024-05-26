@@ -319,6 +319,7 @@ struct NotationDeclaration {
 // Stores info about the DOCTYPE declaration, if any.
 // A DTD is optional - if not provided, assume zero restrictions on actual elements.
 typedef std::map<String, ElementDeclaration> ElementDeclarations;
+typedef std::map<String, AttributeListDeclaration> AttributeListDeclarations;
 typedef std::map<String, GeneralEntity> GeneralEntities;
 typedef std::map<String, ParameterEntity> ParameterEntities;
 static GeneralEntities BUILT_IN_GENERAL_ENTITIES {
@@ -332,7 +333,7 @@ struct DoctypeDeclaration {
     ExternalID external_id;
     std::vector<ProcessingInstruction> processing_instructions;
     ElementDeclarations element_declarations;
-    std::map<String, AttributeListDeclaration> attribute_list_declarations;
+    AttributeListDeclarations attribute_list_declarations;
     GeneralEntities general_entities = BUILT_IN_GENERAL_ENTITIES;
     ParameterEntities parameter_entities;
     std::map<String, NotationDeclaration> notation_declarations;

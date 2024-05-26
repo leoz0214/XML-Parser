@@ -11,8 +11,11 @@ using namespace xml;
 
 typedef std::function<void(const Document&)> TestDocument;
 unsigned test_number = 0;
-void test_document(const std::string& string, TestDocument callback, bool validate_elements = true) {
-    Document document = Parser(string).parse_document(validate_elements);
+void test_document(
+    const std::string& string, TestDocument callback,
+    bool validate_elements = true, bool validate_attributes = true
+) {
+    Document document = Parser(string).parse_document(validate_elements, validate_attributes);
     callback(document);
     std::cout << "Document Test " << test_number++ << " passed.\n";
 }
@@ -150,10 +153,14 @@ int main() {
         <!DOCTYPE root [
             <!ATTLIST termdef
                 id      ID      #REQUIRED
+                id      ID      #REQUIRED
                 name    CDATA   #IMPLIED>
-            <!ATTLIST  list type    ( bullets|ordered |glossary )  "ordered">
+            <!ATTLIST  list type    ( bullets|ordered |glossary )  "    ordered   ">
             <!ATTLIST form method  CDATA   #FIXED 'POST' >
-        ]><root><!----></root>
+        ]><root><!---->
+        <termdef id="id1" name="term"/><form method="POST"/><form/>
+        <list type="glossary"/><list/>
+        </root>
     )", [](const Document& document) {
         auto attlists = document.doctype_declaration.attribute_list_declarations;
         assert((attlists.size() == 3));
@@ -177,11 +184,17 @@ int main() {
     test_document(R"(<?xml version='1.00' encoding='utf-8'?>
         <!--Attribute list declarations: more diverse checks-->
         <!DOCTYPE root [
-            <!ATTLIST idrefs a IDREF 'idref' b IDREFS "a b c d e f g">
-            <!ATTLIST ents a ENTITY "entity" b ENTITIES 'h i j k l m'>
-            <!ATTLIST tokens a NMTOKEN '123' b NMTOKENS "1 2 3 4">
-            <!ATTLIST nota a NOTATION ( a | b | c ) #FIXED "c">
-        ]><root></root>
+            <!ATTLIST id id ID #REQUIRED>
+            <!ATTLIST idrefs a IDREF 'idref' b IDREFS " a   b c d   e f g  ">
+            <!ATTLIST ents a ENTITY "entity" b ENTITIES '   h i j k l m'>
+            <!ATTLIST tokens a NMTOKEN '123' b NMTOKENS "1    2   3   4">
+            <!NOTATION a SYSTEM "a"><!NOTATION b SYSTEM "b"><!NOTATION c SYSTEM "c">
+            <!ATTLIST nota a NOTATION ( a | b | c ) #FIXED " c ">
+        ]><root>
+            <id id="a"/><id id="b"/><id id="c"/><id id="d"/><id id="e"/><id id="f"/><id id="g"/>
+            <id id="idref"/>
+            <idrefs></idrefs><nota a="c"/>
+        </root>
     )", [](const Document& document) {
         auto attlists = document.doctype_declaration.attribute_list_declarations;
         AttributeListDeclaration idrefs = attlists.at("idrefs");
@@ -306,6 +319,8 @@ int main() {
         <!ENTITY europe "&europ;e">
         <!ENTITY asia "&#65;&#115;&#105;&#97;">
         <!ENTITY africa 'Africa'>
+        <!ATTLIST countries continents NMTOKENS #REQUIRED>
+        <!ATTLIST country name CDATA #REQUIRED continent CDATA #REQUIRED capital CDATA #REQUIRED>
     ]>
     <!-- Not-all continents included, just for demo-->
     <countries continents="&europe; &asia; &africa;">
@@ -333,6 +348,7 @@ int main() {
         <!ENTITY f "&e;&e;&e;&e;&e;&e;">
         <!ENTITY g "&f;&f;&f;&f;&f;&f;&f;">
         <!ENTITY h "&g;&g;&g;&g;&g;&g;&g;&g;">
+        <!ATTLIST root att CDATA #IMPLIED>
     ]><root att="&a;&b;&c;&d;&e;&f;&g;&h;"></root>)", [](const Document& document) {
         assert((document.root.tag.attributes.at("att").size() ==
             1 + 2 + 6 + 24 + 120 + 720 + 5040 + 40320));
@@ -346,7 +362,7 @@ int main() {
         assert((document.doctype_declaration.general_entities.at("example").value 
             == String("[&#38;][&#38;#38;][&amp;amp;]")));
         assert((document.root.tag.attributes.at("att") == String("[&][&#38;][&amp;]")));
-    }, false);
+    }, false, false);
     test_document(R"(<!DOCTYPE root [
         <!-- Testing explicit built-in entity declarations! -->
         <!ENTITY lt "&#x26;#x03C;">
@@ -356,7 +372,7 @@ int main() {
         <!ENTITY quot "&#000000000000000000034;">
     ]><root all="&lt;&gt;&amp;&apos;&quot;"></root>)", [](const Document& document) {
         assert((document.root.tag.attributes.at("all") == String("<>&'\"")));
-    }, false);
+    }, false, false);
     test_document(R"(<?xml version='1.0'?>
         <!DOCTYPE test [
         <!ELEMENT test (#PCDATA) >
@@ -366,7 +382,7 @@ int main() {
     )", [](const Document& document) {
         assert((document.root.tag.attributes.at("att")
             == String("This sample shows a error-prone method.")));
-    }, false);
+    }, false, false);
     test_document(R"(
         <!DOCTYPE root [
             <!ENTITY d "&#xD;">
@@ -381,7 +397,7 @@ xyz" b="&d;&d;A&a;&#x20;&a;B&da;" c="&#xd;&#xd;A&#xa;&#xa;B&#xd;&#xa;&t;&t;"></r
         assert((attributes.at("a") == String("  xyz")));
         assert((attributes.at("b") == String("  A   B  ")));
         assert((attributes.at("c") == String("\r\rA\n\nB\r\n  ")));
-    }, false);
+    }, false, false);
     test_document(R"(<?xml version="1.0" encoding="utf-8"?>
         <!DOCTYPE activities [
             <!-- If this document is correctly parsed,
@@ -411,7 +427,7 @@ xyz" b="&d;&d;A&a;&#x20;&a;B&da;" c="&#xd;&#xd;A&#xa;&#xa;B&#xd;&#xa;&t;&t;"></r
             assert((activity.tag.attributes.at("distance") == distances[i]));
             assert((activity.text == titles[i]));
         }
-    }, false);
+    }, false,false);
     test_document(R"(
         <!DOCTYPE root [
             <!-- It's not looking great now - markup in entity references! -->
@@ -422,5 +438,5 @@ xyz" b="&d;&d;A&a;&#x20;&a;B&da;" c="&#xd;&#xd;A&#xa;&#xa;B&#xd;&#xa;&t;&t;"></r
         assert((document.root.text == String("Extremely bad situation here!ABC")));
         assert((document.root.children.size() == 3));
         assert((document.root.children.at(1).tag.attributes.at("c") == String("d")));
-    }, false);
+    }, false, false);
 }

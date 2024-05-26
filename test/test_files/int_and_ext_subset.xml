@@ -1,7 +1,7 @@
 <!-- Mixing internal and external subset now! Overriding testing -->
 <!DOCTYPE products SYSTEM "test/test_files/external/ext_subset.xml" [
     <!ENTITY % product-contents "(image*, video*, audio*)">
-    <!ATTLIST product desc CDATA "N/A">
+    <!ATTLIST product desc CDATA "N/A" name CDATA #REQUIRED id NMTOKEN #REQUIRED>
     <!ENTITY img-ext ".jpg">
 ]>
 <products>

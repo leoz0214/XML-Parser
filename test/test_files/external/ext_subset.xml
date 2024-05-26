@@ -2,7 +2,10 @@
 <!-- Basic example of an external DTD subset!!! -->
 <!ENTITY % product-contents "(primary-image?, image+, review*)">
 <!ELEMENT product %product-contents;>
-<!ATTLIST product name CDATA #REQUIRED desc CDATA "&quot;Product&quot;" id ID #IMPLIED>
+<!ATTLIST product name CDATA #REQUIRED desc CDATA "&quot;Product&quot;" id CDATA #IMPLIED>
+<!ATTLIST primary-image href CDATA #REQUIRED>
+<!ATTLIST image href CDATA #REQUIRED>
+<!ATTLIST review stars NMTOKEN "3">
 <!NOTATION Products SYSTEM "products.db">
 <!ENTITY img-ext ".png">
 <?processor prod_proc.exe?>

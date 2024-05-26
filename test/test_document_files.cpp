@@ -21,13 +21,16 @@ const std::string FOLDER = "test/test_files";
 
 typedef std::function<void(const Document&)> TestDocument;
 unsigned test_number = 0;
-void test_document_file(const std::string& filename, TestDocument callback, bool validate_elements = true) {
+void test_document_file(
+    const std::string& filename, TestDocument callback,
+    bool validate_elements = true, bool validate_attributes = true
+) {
     std::string file_path = FOLDER + "/" + filename;
     std::ifstream file(file_path);
     if (!file.is_open()) {
         throw std::runtime_error(filename + " not found");
     }
-    Document document = Parser(file).parse_document(validate_elements);
+    Document document = Parser(file).parse_document(validate_elements, validate_attributes);
     callback(document);
     std::cout << "Document File Test " << test_number++ << " passed.\n";
 }

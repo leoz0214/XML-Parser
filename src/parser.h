@@ -59,7 +59,8 @@ class Parser {
     String parse_name(
         const String&, bool validate = true, const ParameterEntities* parameter_entities = nullptr);
     String parse_nmtoken(const String&, const ParameterEntities&);
-    String parse_attribute_value(const DoctypeDeclaration&, bool references_active = true);
+    String parse_attribute_value(
+        const DoctypeDeclaration&, bool references_active = true, bool is_cdata = true);
     String parse_entity_value(const DoctypeDeclaration&);
     Char parse_character_entity();
     String parse_general_entity_name(const GeneralEntities&);
@@ -68,7 +69,9 @@ class Parser {
     void end_general_entity();
     void parse_parameter_entity(const ParameterEntities&, bool);
     void end_parameter_entity();
-    std::pair<String, String> parse_attribute(const DoctypeDeclaration&, bool references_active = true);
+    std::pair<String, String> parse_attribute(
+        const DoctypeDeclaration&, bool references_active = true,
+        bool is_cdata = true, const String* tag_name = nullptr);
     Tag parse_tag(const DoctypeDeclaration&);
     void parse_comment();
     String parse_cdata();
@@ -110,7 +113,7 @@ class Parser {
     Element parse_element(const DoctypeDeclaration&, bool = false);
     public:
         Element parse_element();
-        Document parse_document(bool validate_elements = false);
+        Document parse_document(bool validate_elements = false, bool validate_attribute = false);
         Parser(const std::string&);
         Parser(std::istream&);
 };
