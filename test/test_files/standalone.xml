@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8" standalone="yes" ?>
+<!DOCTYPE alone SYSTEM "test/test_files/external/standalone_ignore.xml" [
+    <!ELEMENT alone (#PCDATA)*>
+    <!ATTLIST alone att1 CDATA #REQUIRED>
+    <!ENTITY abc "abc">
+]>
+<alone att1="&apos;1&apos;" att2="&amp;2&amp;">&abc;def</alone>

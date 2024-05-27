@@ -1,0 +1,3 @@
+<!-- REMEMBER THAT INTERNAL DTD PARSED FIRST & REPEAT DECLS IGNORED -->
+<!ATTLIST alone att2 CDATA "Cannot use default">
+<!ENTITY apos "'">

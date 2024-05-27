@@ -11,13 +11,13 @@ void validate_document(const Document&, bool, bool);
 
 // Validates an element, ensuring it meets the content requirements
 // as declared in the DTD.
-void validate_element(const Element&, const ElementDeclarations&);
+void validate_element(const Element&, const ElementDeclarations&, bool);
 
 // Recursive Helper for element content validation.
 // Returns true if match.
 bool valid_element_content_helper(const Element&, const ElementContentModel&, std::size_t&);
 // Validates element content (child elements separated by optional whitespace only).
-void validate_element_content(const Element&, const ElementContentModel&);
+void validate_element_content(const Element&, const ElementContentModel&, bool);
 
 // Validates mixed content (any number of certain child elements, cdata allowed).
 void validate_mixed_content(const Element&, const MixedContentModel&);

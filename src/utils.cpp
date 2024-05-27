@@ -188,8 +188,8 @@ bool valid_attribute_value_character(Char c) {
 }
 
 bool valid_processing_instruction_target(const String& target) {
-    // Not empty, not xml (case-insensitive).
-    return !target.empty() && (target.size() != 3 || valid_name(target));
+    // Not empty, not beginning with xml (case-insensitive).
+    return valid_name(target);
 }
 
 bool valid_version(const String& version) {

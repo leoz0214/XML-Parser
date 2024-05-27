@@ -55,6 +55,7 @@ class Parser {
     bool parameter_entity_active = false;
     bool just_parsed_carriage_return = false;
     bool external_dtd_content_active = false;
+    bool standalone = false;
 
     String parse_name(
         const String&, bool validate = true, const ParameterEntities* parameter_entities = nullptr);

@@ -128,4 +128,11 @@ int main() {
         assert((dtd.attribute_list_declarations.at("ele").at("att1")
             .presence == AttributePresence::required));
     }, false);
+    test_document_file("standalone.xml", [](const Document& document) {
+        Element root = document.root;
+        assert((document.standalone));
+        assert((root.tag.attributes.at("att1") == String("'1'")));
+        assert((root.tag.attributes.at("att2") == String("&2&")));
+        assert((root.text == String("abcdef")));
+    });
 }

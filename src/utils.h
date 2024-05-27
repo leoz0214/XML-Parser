@@ -274,6 +274,7 @@ struct AttributeDeclaration {
     // Default value handling.
     bool has_default_value = false;
     String default_value;
+    bool from_external = false;
 };
 AttributeType get_attribute_type(const String&);
 AttributePresence get_attribute_presence(const String&);
@@ -291,6 +292,8 @@ struct Entity {
     bool is_external = false;
     // External entities only.
     ExternalID external_id;
+    // When entity is declared inside external subset/parameter entity.
+    bool from_external = false;
 };
 
 Char parse_character_entity(const String&);
@@ -356,7 +359,7 @@ static String CONDITIONAL_TYPE_NAME_TERMINATORS = []() {
 struct Document {
     String version = "1.0";
     String encoding = "utf-8";
-    bool standalone = true;
+    bool standalone = false;
     DoctypeDeclaration doctype_declaration;
     Element root;
     std::vector<ProcessingInstruction> processing_instructions;

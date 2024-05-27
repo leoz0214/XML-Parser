@@ -381,39 +381,22 @@ String Parser::parse_attribute_value(const DoctypeDeclaration& dtd, bool referen
 }
 
 String Parser::parse_entity_value(const DoctypeDeclaration& dtd) {
-    Char quote = this->get();
+    Char quote = this->get(dtd.parameter_entities);
     if (quote != SINGLE_QUOTE && quote != DOUBLE_QUOTE) {
         throw;
     }
     operator++();
     String value;
+    int parameter_entity_stack_size_before = this->parameter_entity_stack.size();
     while (true) {
-        int before_parameter_entity_stack_size = this->parameter_entity_stack.size();
         Char c = this->get(dtd.parameter_entities, false, true);
-        int after_parameter_entity_stack_size = this->parameter_entity_stack.size();
-        if (after_parameter_entity_stack_size > before_parameter_entity_stack_size) {
-            // Parse all parameter entity text.
-            while (true) {
-                value.push_back(c);
-                operator++();
-                if (before_parameter_entity_stack_size == 0) {
-                    if (this->parameter_entity_eof()) {
-                        this->end_parameter_entity();
-                        break;
-                    }
-                } else {
-                    if (this->parameter_entity_stack.size() == before_parameter_entity_stack_size) {
-                        break;
-                    }
-                }
-                c = this->get();
-            }
-            continue;
-        }
         operator++();
+        if (this->parameter_entity_eof()) {
+            this->end_parameter_entity();
+        }
         if (c == AMPERSAND && !this->just_parsed_character_reference) {
             // General/character entity.
-            if (this->get() == OCTOTHORPE) {
+            if (this->get(dtd.parameter_entities) == OCTOTHORPE) {
                 // Character entity: &#...
                 operator++();
                 value.push_back(this->parse_character_entity());
@@ -427,7 +410,7 @@ String Parser::parse_entity_value(const DoctypeDeclaration& dtd) {
                 value.push_back(SEMI_COLON);
             }
         } else {
-            if (c == quote) {
+            if (c == quote && this->parameter_entity_stack.size() <= parameter_entity_stack_size_before) {
                 break;
             }
             value.push_back(c);
@@ -481,6 +464,14 @@ void Parser::parse_general_entity(const GeneralEntities& general_entities) {
     if (general_entities.at(name).is_unparsed) {
         throw;
     }
+    if (
+        !BUILT_IN_GENERAL_ENTITIES.count(name)
+        && general_entities.at(name).from_external && this->standalone
+    ) {
+        // Entities DECLARED INSIDE external files prohibited if standalone.
+        throw;
+    }
+
     if (general_entities.at(name).is_external) {
         this->general_entity_stack.push(
             {general_entities.at(name).external_id.system_id, true});
@@ -633,12 +624,16 @@ Tag Parser::parse_tag(const DoctypeDeclaration& dtd) {
             }
             tag.attributes.insert(attribute);
         }
-    }
-    if (dtd.attribute_list_declarations.count(tag.name)) {
-        // Add default values if available. No validation here at all. That is for later.
-        for (const auto& [attribute_name, attribute] : dtd.attribute_list_declarations.at(tag.name)) {
-            if (!tag.attributes.count(attribute_name) && attribute.has_default_value) {
-                tag.attributes[attribute_name] = attribute.default_value;
+        if (dtd.attribute_list_declarations.count(tag.name)) {
+            // Add default values if available. No validation here at all. That is for later.
+            for (const auto& [attribute_name, attribute] : dtd.attribute_list_declarations.at(tag.name)) {
+                if (!tag.attributes.count(attribute_name) && attribute.has_default_value) {
+                    if (attribute.from_external && this->standalone) {
+                        // Default attribute values from external cannot be used in standalone doc.
+                        throw;
+                    }
+                    tag.attributes[attribute_name] = attribute.default_value;
+                }
             }
         }
     }
@@ -674,8 +669,9 @@ String Parser::parse_cdata() {
         Char c = this->get();
         operator++();
         // Note, CDATA section must end in ]]>
-        if (c == RIGHT_ANGLE_BRACKET && prev_char == RIGHT_SQUARE_BRACKET
-                && prev_prev_char == RIGHT_SQUARE_BRACKET
+        if (
+            c == RIGHT_ANGLE_BRACKET && prev_char == RIGHT_SQUARE_BRACKET
+            && prev_prev_char == RIGHT_SQUARE_BRACKET
         ) {
             // Need to remove ending ]]
             cdata.pop_back();
@@ -1303,11 +1299,12 @@ MixedContentModel Parser::parse_mixed_content_model(
                 // Disallow empty MCM without even #PCDATA, or one ending in separator.
                 throw;
             }
-            if (!mcm.choices.empty()) {
-                if (this->get(parameter_entities) != ASTERISK) {
-                    // MCM actually ends in )* if not empty.
+            if (this->get(parameter_entities) != ASTERISK) {
+                if (!mcm.choices.empty()) {
+                    // MCM MUST end in )* if not empty.
                     throw;
                 }
+            } else {
                 operator++();
             }
             break;
@@ -1396,6 +1393,7 @@ void Parser::parse_attribute_declaration(DoctypeDeclaration& dtd, AttributeListD
     if (attlist.count(ad.name)) {
         return;
     }
+    ad.from_external = this->external_dtd_content_active;
     // Register for now, validate later.
     attlist[ad.name] = ad;
 }
@@ -1515,6 +1513,7 @@ void Parser::parse_general_entity_declaration(DoctypeDeclaration& dtd) {
         }
     }
     if (!dtd.general_entities.count(ge.name)) {
+        ge.from_external = this->external_dtd_content_active;
         // Only count first instance of general entity declaration.
         dtd.general_entities[ge.name] = ge;
     }
@@ -1534,6 +1533,7 @@ void Parser::parse_parameter_entity_declaration(DoctypeDeclaration& dtd) {
         pe.external_id = this->parse_external_id(&dtd.parameter_entities);
     }
     if (!dtd.parameter_entities.count(pe.name)) {
+        pe.from_external = this->external_dtd_content_active;
         // Only count first instance of parameter entity declaration.
         dtd.parameter_entities[pe.name] = pe;
     }
@@ -1648,6 +1648,9 @@ Document Parser::parse_document(bool validate_elements, bool validate_attributes
                 if (pi.target == String("xml")) {
                     // Indeed XML declaration.
                     this->parse_xml_declaration(document);
+                    if (document.standalone) {
+                        this->standalone = true;
+                    }
                 } else {
                     document.processing_instructions.push_back(pi);
                 }
@@ -1690,7 +1693,7 @@ Document Parser::parse_document(bool validate_elements, bool validate_attributes
                     throw;
                 }
                 root_seen = true;
-                document.root = this->parse_element(document.doctype_declaration);
+                document.root = this->parse_element(document.doctype_declaration, false);
         }
         xml_declaration_possible = false;
     }

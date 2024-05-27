@@ -29,8 +29,8 @@ int main() {
     });
     test_document(R"(<?xml    version = "1.234"  encoding="UtF-8" standalone = 'yes' ?>
         <!-- If this document passes - it is a good sign overall ! ! ! -->
-        <?xml2 goodluck?><!----><!----><!----><!----><!----><!----><!----><!---->
-        <?xml3 greatluck?>
+        <?abc2 goodluck?><!----><!----><!----><!----><!----><!----><!----><!---->
+        <?abc3 greatluck?>
         <root   category="food"  shopid="441">
             <item name="cookie" price="0.59"/>
             <item name="salmon" price="2.25"/>
@@ -39,14 +39,14 @@ int main() {
                 <item name="cake" disc-price="3.49" price="4.99"/>
                 <item price = "0.09" disc-price="0.04"  name= "gum" />    
             </discounted>
-        </root >   <!-- END OF DOC --> <?xml4 final?>
+        </root >   <!-- END OF DOC --> <?abc4 final?>
     )", [](const Document& document) {
         assert((document.version == String("1.234")));
         assert((document.encoding == String("utf-8")));
         assert((document.standalone == true));
         assert((document.doctype_declaration.exists == false));
         assert((document.processing_instructions.size() == 3));
-        assert((document.processing_instructions.at(1).target == String("xml3")));
+        assert((document.processing_instructions.at(1).target == String("abc3")));
         assert((document.root.tag.attributes.at("shopid") == String("441")));
         const auto& children = document.root.children;
         assert((children.size() == 3));

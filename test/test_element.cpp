@@ -56,9 +56,9 @@ int main() {
     test_element("<:>XML Parsing is <![CDATA[Fun & Painful!]]>!!!</:>", [](const Element& element) {
         assert((element.text == String("XML Parsing is Fun & Painful!!!!")));
     });
-    test_element("<h>abc<?xml-spreadsheet a='123?'?>def<?tgt?></h>", [](const Element& element) {
+    test_element("<h>abc<?x-spreadsheet a='123?'?>def<?tgt?></h>", [](const Element& element) {
         assert((element.text == String("abcdef")));
-        assert((element.processing_instructions[0].target == String("xml-spreadsheet")));
+        assert((element.processing_instructions[0].target == String("x-spreadsheet")));
         assert((element.processing_instructions[0].instruction == String("a='123?'")));
         assert((element.processing_instructions[1].target == String("tgt")));
         assert((element.processing_instructions[1].instruction.empty()));

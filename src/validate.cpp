@@ -6,14 +6,17 @@
 
 namespace xml {
 
-void validate_document(const Document& document, bool validate_elements, bool validate_attributes_) {
+void validate_document(
+    const Document& document, bool validate_elements, bool validate_attributes_
+) {
     if (document.root.tag.name != document.doctype_declaration.root_name) {
         // Root name must match the root name in the DTD.
         throw;
     }
     if (validate_elements) {
         // Validate root element and all its children (recursively).
-        validate_element(document.root, document.doctype_declaration.element_declarations);
+        validate_element(
+            document.root, document.doctype_declaration.element_declarations, document.standalone);
     }
     if (validate_attributes_) {
         // Validate root element attributes and all attributes of children (recursively).
@@ -23,7 +26,9 @@ void validate_document(const Document& document, bool validate_elements, bool va
     }
 }
 
-void validate_element(const Element& element, const ElementDeclarations& element_declarations) {
+void validate_element(
+    const Element& element, const ElementDeclarations& element_declarations, bool standalone
+) {
     if (!element_declarations.count(element.tag.name)) {
         // Element not declared at all.
         throw;
@@ -40,7 +45,7 @@ void validate_element(const Element& element, const ElementDeclarations& element
             }
             break;
         case ElementType::children:
-            validate_element_content(element, ed.element_content);
+            validate_element_content(element, ed.element_content, standalone);
             break;
         case ElementType::mixed:
             validate_mixed_content(element, ed.mixed_content);
@@ -48,7 +53,7 @@ void validate_element(const Element& element, const ElementDeclarations& element
     }
     // Validate all child elements in the same way.
     for (const Element& child : element.children) {
-        validate_element(child, element_declarations);
+        validate_element(child, element_declarations, standalone);
     }
 }
 
@@ -102,7 +107,11 @@ bool valid_element_content_helper(
     return count >= min_count && count <= max_count;
 }
 
-void validate_element_content(const Element& element, const ElementContentModel& ecm) {
+void validate_element_content(const Element& element, const ElementContentModel& ecm, bool standalone) {
+    if (standalone && !element.text.empty()) {
+        // Must not be standalone if white space occurs directly within any instance of those types
+        throw;
+    }
     // Ensure only interspersed whitespace.
     if (!std::all_of(element.text.begin(), element.text.end(), is_whitespace)) {
         throw;
