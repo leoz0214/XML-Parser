@@ -112,9 +112,8 @@ void validate_element_content(const Element& element, const ElementContentModel&
         // Must not be standalone if white space occurs directly within any instance of those types
         throw;
     }
-    // Ensure only interspersed whitespace.
-    if (!std::all_of(element.text.begin(), element.text.end(), is_whitespace)) {
-        throw;
+    if (!element.children_only) {
+        throw 0.0;
     }
     std::size_t pos = 0;
     // Note: must also ensure all elements covered (hence pos must equal child count in the end).

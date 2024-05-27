@@ -1,5 +1,6 @@
 // Main parsing logic goes here.
 #pragma once
+#include <filesystem>
 #include <functional>
 #include <istream>
 #include <memory>
@@ -19,8 +20,10 @@ class Parser;
 
 struct EntityStream {
     String text;
+    String name;
     std::unique_ptr<Parser> parser = nullptr;
     unique_istream_ptr stream = nullptr;
+    std::filesystem::path file_path;
     std::size_t pos;
     String version;
     String encoding;
@@ -30,8 +33,8 @@ struct EntityStream {
     bool in_entity_value;
     bool leading_parameter_space_done = false;
     bool trailing_parameter_space_done = false;
-    EntityStream(const String&);
-    EntityStream(const String&, bool);
+    EntityStream(const String&, const String&);
+    EntityStream(const std::filesystem::path&, const String&);
     Char get();
     void operator++();
     bool eof();
@@ -49,6 +52,11 @@ class Parser {
     // Mainly because recursive entity references possible.
     std::stack<EntityStream> general_entity_stack;
     std::stack<EntityStream> parameter_entity_stack;
+    // Track file paths. Assume main doc in CWD.
+    std::stack<std::filesystem::path> file_paths;
+    // Track seen entity names to detect self references (avoid infinite recursion).
+    std::set<String> general_entity_names;
+    std::set<String> parameter_entity_names;
     bool general_entity_active = false;
     std::size_t parameter_entity_pos = 0;
     bool just_parsed_character_reference = false;
@@ -58,15 +66,19 @@ class Parser {
     bool standalone = false;
 
     String parse_name(
-        const String&, bool validate = true, const ParameterEntities* parameter_entities = nullptr);
+        const String&, bool validate = true, const ParameterEntities* parameter_entities = nullptr,
+        const std::set<String>* validation_exeptions = nullptr);
     String parse_nmtoken(const String&, const ParameterEntities&);
     String parse_attribute_value(
         const DoctypeDeclaration&, bool references_active = true, bool is_cdata = true);
     String parse_entity_value(const DoctypeDeclaration&);
     Char parse_character_entity();
     String parse_general_entity_name(const GeneralEntities&);
-    void parse_general_entity(const GeneralEntities&);
-    String parse_general_entity_text(const GeneralEntities&, std::function<void(Char)>, int = 0);
+    String parse_general_entity_text(
+        const GeneralEntities&, std::function<void(Char)> func,
+        int original_depth = 0, bool in_attribute_value = false);
+    void parse_general_entity(const GeneralEntities&, bool in_attribute_value);
+    std::filesystem::path get_file_path();
     void end_general_entity();
     void parse_parameter_entity(const ParameterEntities&, bool);
     void end_parameter_entity();
@@ -79,11 +91,11 @@ class Parser {
     ProcessingInstruction parse_processing_instruction(bool detect_xml_declaration = false);
     void parse_xml_declaration(Document&);
     DoctypeDeclaration parse_doctype_declaration();
-    String parse_public_id(const ParameterEntities* parameter_entities = nullptr);
-    String parse_system_id(const ParameterEntities* parameter_entities = nullptr);
+    std::filesystem::path parse_public_id(const ParameterEntities* parameter_entities = nullptr);
+    std::filesystem::path parse_system_id(const ParameterEntities* parameter_entities = nullptr);
     ExternalID parse_external_id(const ParameterEntities* parameter_entities = nullptr);
     void parse_dtd_subsets(DoctypeDeclaration&, bool = false, bool = false);
-    void start_external_subset(const String&);
+    void start_external_subset(const std::filesystem::path&);
     void parse_markup_declaration(DoctypeDeclaration&);
     void parse_conditional_section(DoctypeDeclaration&, int);
     void parse_include_section(DoctypeDeclaration&);
@@ -101,7 +113,7 @@ class Parser {
     void parse_parameter_entity_declaration(DoctypeDeclaration&);
     void parse_notation_declaration(DoctypeDeclaration&);
     Char get();
-    Char get(const GeneralEntities&);
+    Char get(const GeneralEntities&, bool in_attribute_value = false);
     Char get(
         const ParameterEntities&, bool in_markup = true, bool in_entity_value = false,
         bool ignore_whitespace_after_percent_sign = false);

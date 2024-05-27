@@ -2,6 +2,7 @@
 #pragma once
 #include <algorithm>
 #include <climits>
+#include <filesystem>
 #include <initializer_list>
 #include <map>
 #include <istream>
@@ -175,6 +176,8 @@ struct Element {
     std::vector<Element> children;
     std::vector<ProcessingInstruction> processing_instructions;
     bool is_empty = true;
+    // Only child elements and raw whitespace (no CDATA, char references etc.)
+    bool children_only = true;
 };
 
 // External ID for external entities.
@@ -182,9 +185,9 @@ enum class ExternalIDType {system, public_, none};
 struct ExternalID {
     ExternalIDType type = ExternalIDType::none;
     // Only should be accessed if it is SYSTEM or PUBLIC (exists).
-    String system_id;
+    std::filesystem::path system_id;
     // Only should be accessed if it is PUBLIC.
-    String public_id;
+    std::filesystem::path public_id;
 };
 static std::map<String, ExternalIDType> EXTERNAL_ID_TYPES {
     {"SYSTEM", ExternalIDType::system}, {"PUBLIC", ExternalIDType::public_}
@@ -284,6 +287,16 @@ static String ENUMERATED_ATTRIBUTE_NAME_TERMINATORS = []() {
     valid_chars.insert(valid_chars.end(), {VERTICAL_BAR, RIGHT_PARENTHESIS});
     return valid_chars;
 }();
+static String XML_SPACE = "xml:space";
+// Note, xml:lang meant to be valid langauge specifier as per
+// https://datatracker.ietf.org/doc/html/rfc4646, but this is beyond the scope of this project.
+// The user is trusted that the language is correct. Only make the tag legal.
+static String XML_LANG = "xml:lang";
+static std::set<String> SPECIAL_ATTRIBUTE_NAMES {XML_SPACE, XML_LANG};
+// For xml:space attributes, one or both of default/preserve must be in enum.
+static std::set<std::set<String>> XML_SPACE_ENUMS {
+    {"default", "preserve"}, {"default"}, {"preserve"}
+};
 
 // Entity handling - both general and parameter entities.
 struct Entity {
@@ -315,8 +328,8 @@ struct NotationDeclaration {
     String name;
     bool has_system_id;
     bool has_public_id;
-    String system_id;
-    String public_id;
+    std::filesystem::path system_id;
+    std::filesystem::path public_id;
 };
 
 // Stores info about the DOCTYPE declaration, if any.

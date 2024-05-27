@@ -5,15 +5,18 @@
 
 namespace xml {
 
-EntityStream::EntityStream(const String& text) {
+EntityStream::EntityStream(const String& text, const String& name) {
     this->text = text;
+    this->name = name;
     this->pos = 0;
     this->is_external = false;
 }
 
-EntityStream::EntityStream(const String& file_path, bool) {
-    std::ifstream* stream_ptr = new std::ifstream(std::string(file_path));
+EntityStream::EntityStream(const std::filesystem::path& file_path, const String& name) {
+    this->file_path = file_path;
+    std::ifstream* stream_ptr = new std::ifstream(this->file_path);
     this->stream = unique_istream_ptr(stream_ptr);
+    this->name = name;
     Parser* parser_ptr = new Parser(*this->stream);
     this->parser = std::unique_ptr<Parser>(parser_ptr);
     this->is_external = true;
@@ -181,7 +184,7 @@ Char Parser::get() {
     return c;
 }
 
-Char Parser::get(const GeneralEntities& general_entities) {
+Char Parser::get(const GeneralEntities& general_entities, bool in_attribute_value) {
     Char c = this->get();
     if (c == AMPERSAND && !this->just_parsed_character_reference) {
         operator++();
@@ -189,7 +192,7 @@ Char Parser::get(const GeneralEntities& general_entities) {
             operator++();
             return this->parse_character_entity();
         }
-        this->parse_general_entity(general_entities);
+        this->parse_general_entity(general_entities, in_attribute_value);
         return this->general_entity_stack.top().get();
     }
     return c;
@@ -225,6 +228,10 @@ void Parser::operator++() {
     if (this->general_entity_active) {
         ++this->general_entity_stack.top();
         if (this->general_entity_stack.top().eof() && this->general_entity_stack.size() > 1) {
+            this->general_entity_names.erase(this->general_entity_stack.top().name);
+            if (this->general_entity_stack.top().is_external) {
+                this->file_paths.pop();
+            }
             this->general_entity_stack.pop();
         }
         return;
@@ -232,6 +239,10 @@ void Parser::operator++() {
     if (this->parameter_entity_active) {
         ++this->parameter_entity_stack.top();
         if (this->parameter_entity_stack.top().eof() && this->parameter_entity_stack.size() > 1) {
+            this->parameter_entity_names.erase(this->parameter_entity_stack.top().name);
+            if (this->parameter_entity_stack.top().is_external) {
+                this->file_paths.pop();
+            }
             this->parameter_entity_stack.pop();
         }
         return;
@@ -272,7 +283,8 @@ void Parser::ignore_whitespace(const ParameterEntities& parameter_entities) {
 }
 
 String Parser::parse_name(
-    const String& until, bool validate, const ParameterEntities* parameter_entities
+    const String& until, bool validate,
+    const ParameterEntities* parameter_entities, const std::set<String>* validation_exemptions
 ) {
     String name;
     while (true) {
@@ -289,7 +301,10 @@ String Parser::parse_name(
         name.push_back(c);
         operator++();
     }
-    if (validate && !valid_name(name)) {
+    if (
+        validate && !valid_name(name) &&
+        (validation_exemptions == nullptr || !validation_exemptions->count(name))
+    ) {
         throw;
     }
     return name;
@@ -318,7 +333,7 @@ String Parser::parse_attribute_value(const DoctypeDeclaration& dtd, bool referen
     String value;
     int general_entity_stack_size_before = this->general_entity_stack.size();
     while (true) {
-        Char c = this->get(dtd.general_entities);
+        Char c = this->get(dtd.general_entities, true);
         if (this->general_entity_stack.size() > general_entity_stack_size_before) {
             if (!references_active) {
                 throw;
@@ -338,7 +353,7 @@ String Parser::parse_attribute_value(const DoctypeDeclaration& dtd, bool referen
                 } else {
                     value.push_back(c);
                 }             
-            }, general_entity_stack_size_before);
+            }, general_entity_stack_size_before, true);
             continue;
         }
         if (!this->just_parsed_character_reference) {
@@ -456,7 +471,7 @@ String Parser::parse_general_entity_name(const GeneralEntities& general_entities
     return name;
 }
 
-void Parser::parse_general_entity(const GeneralEntities& general_entities) {
+void Parser::parse_general_entity(const GeneralEntities& general_entities, bool in_attribute_value) {
     String name = this->parse_general_entity_name(general_entities);
     if (!general_entities.count(name)) {
         throw;
@@ -471,25 +486,33 @@ void Parser::parse_general_entity(const GeneralEntities& general_entities) {
         // Entities DECLARED INSIDE external files prohibited if standalone.
         throw;
     }
-
+    if (general_entity_names.count(name)) {
+        // Recursive self-reference - illegal.
+        throw;
+    }
+    general_entity_names.insert(name);
     if (general_entities.at(name).is_external) {
-        this->general_entity_stack.push(
-            {general_entities.at(name).external_id.system_id, true});
+        if (in_attribute_value) {
+            // Attribute values must not contain entity references to external entities.
+            throw;
+        }
+        this->general_entity_stack.push({general_entities.at(name).external_id.system_id, name});
+        this->file_paths.push(this->general_entity_stack.top().file_path);
     } else {
-        this->general_entity_stack.push({general_entities.at(name).value});
+        this->general_entity_stack.push({general_entities.at(name).value, name});
     }
     this->general_entity_active = true;
 }
 
 String Parser::parse_general_entity_text(
     const GeneralEntities& general_entities, std::function<void(Char)> func,
-    int original_depth
+    int original_depth, bool in_attribute_value
 ) {
     String text;
     while (true) {
         // Ampersand means recursive entity reference.
         // Only if not ampersand should character be added to value.
-        Char c = this->get(general_entities);
+        Char c = this->get(general_entities, in_attribute_value);
         if (c != AMPERSAND || this->just_parsed_character_reference) {
             func(c);
             if (!this->just_parsed_character_reference) {
@@ -510,7 +533,11 @@ String Parser::parse_general_entity_text(
 }
 
 void Parser::end_general_entity() {
+    if (this->general_entity_stack.top().is_external) {
+        this->file_paths.pop();
+    }
     this->general_entity_stack = {};
+    this->general_entity_names = {};
     this->general_entity_active = false;
 }
 
@@ -531,20 +558,39 @@ void Parser::parse_parameter_entity(const ParameterEntities& parameter_entities,
         // Parameter entity name is not declared.
         throw;
     }
+    if (parameter_entity_names.count(name)) {
+        // Recursive self-reference - illegal.
+        throw;
+    }
+    parameter_entity_names.insert(name);
     EntityStream parameter_entity = parameter_entities.at(name).is_external
-        ? EntityStream(parameter_entities.at(name).external_id.system_id, true)
-        : EntityStream(parameter_entities.at(name).value);
+        ? EntityStream(parameter_entities.at(name).external_id.system_id, name)
+        : EntityStream(parameter_entities.at(name).value, name);
     parameter_entity.is_parameter = true;
     parameter_entity.in_entity_value = in_entity_value;
     if (this->parameter_entity_stack.empty()) {
         this->external_dtd_content_active = parameter_entity.is_external;
     }
+    if (parameter_entity.is_external) {
+        this->file_paths.push(parameter_entity.file_path);
+    }
     this->parameter_entity_stack.push(std::move(parameter_entity));
     this->parameter_entity_active = true;
 }
 
+std::filesystem::path Parser::get_file_path() {
+    if (this->file_paths.empty()) {
+        return std::filesystem::current_path();
+    }
+    return this->file_paths.top().parent_path();
+}
+
 void Parser::end_parameter_entity() {
+    if (this->parameter_entity_stack.top().is_external) {
+        this->file_paths.pop();
+    }
     this->parameter_entity_stack = {};
+    this->parameter_entity_names = {};
     this->parameter_entity_active = false;
     this->external_dtd_content_active = false;
 }
@@ -552,7 +598,7 @@ void Parser::end_parameter_entity() {
 std::pair<String, String> Parser::parse_attribute(
     const DoctypeDeclaration& dtd, bool references_active, bool is_cdata, const String* tag_name
 ) {
-    String name = this->parse_name(ATTRIBUTE_NAME_TERMINATORS);
+    String name = this->parse_name(ATTRIBUTE_NAME_TERMINATORS, true, nullptr, &SPECIAL_ATTRIBUTE_NAMES);
     // Ignore whitespace until '=' is reached.
     this->ignore_whitespace();
     if (this->get() != EQUAL) {
@@ -760,6 +806,7 @@ Element Parser::parse_element(const DoctypeDeclaration& dtd, bool allow_end) {
             element.text.push_back(c);
             char_data.clear();
             element.is_empty = false;
+            element.children_only = false;
             continue;
         }
         switch (c) {
@@ -797,6 +844,7 @@ Element Parser::parse_element(const DoctypeDeclaration& dtd, bool allow_end) {
                                 String cdata = this->parse_cdata();
                                 element.text.reserve(element.text.size() + cdata.size());
                                 element.text.insert(element.text.end(), cdata.begin(), cdata.end());
+                                element.children_only = false;
                                 break;
                             }
                             default:
@@ -807,6 +855,7 @@ Element Parser::parse_element(const DoctypeDeclaration& dtd, bool allow_end) {
                         // Processing instruction.
                         operator++();
                         element.processing_instructions.push_back(this->parse_processing_instruction());
+                        element.children_only = false;
                         break;
                     default:
                         // Must be child element or erroneous.
@@ -833,6 +882,7 @@ Element Parser::parse_element(const DoctypeDeclaration& dtd, bool allow_end) {
                 }
                 char_data.push_back(c);
                 operator++();
+                element.children_only = false;
                 break;
             default:
                 // Any other character continues on the character data if valid.
@@ -841,6 +891,9 @@ Element Parser::parse_element(const DoctypeDeclaration& dtd, bool allow_end) {
                 }
                 operator++();
                 char_data.push_back(c);
+                if (!is_whitespace(c)) {
+                    element.children_only = false;
+                }
         }
         element.is_empty = false;
     }
@@ -919,7 +972,7 @@ void Parser::parse_xml_declaration(Document& document) {
     }
 }
 
-String Parser::parse_public_id(const ParameterEntities* parameter_entities) {
+std::filesystem::path Parser::parse_public_id(const ParameterEntities* parameter_entities) {
     Char quote = parameter_entities != nullptr ? this->get(*parameter_entities) : this->get();
     operator++();
     if (quote != SINGLE_QUOTE && quote != DOUBLE_QUOTE) {
@@ -937,10 +990,14 @@ String Parser::parse_public_id(const ParameterEntities* parameter_entities) {
         }
         public_id.push_back(c);
     }
-    return public_id;
+    std::filesystem::path result = std::string(public_id);
+    if (result.is_relative()) {
+        result = (this->get_file_path() / result).lexically_normal();
+    }
+    return result;
 }
 
-String Parser::parse_system_id(const ParameterEntities* parameter_entities) {
+std::filesystem::path Parser::parse_system_id(const ParameterEntities* parameter_entities) {
     Char quote = parameter_entities != nullptr ? this->get(*parameter_entities) : this->get();
     operator++();
     if (quote != SINGLE_QUOTE && quote != DOUBLE_QUOTE) {
@@ -958,7 +1015,11 @@ String Parser::parse_system_id(const ParameterEntities* parameter_entities) {
         }
         system_id.push_back(c);
     }
-    return system_id;
+    std::filesystem::path result = std::string(system_id);
+    if (result.is_relative()) {
+        result = (this->get_file_path() / result).lexically_normal();
+    }
+    return result;
 }
 
 ExternalID Parser::parse_external_id(const ParameterEntities* parameter_entities) {
@@ -1067,14 +1128,16 @@ void Parser::parse_dtd_subsets(DoctypeDeclaration& dtd, bool external_subset_sta
     }
 }
 
-void Parser::start_external_subset(const String& system_id) {
+void Parser::start_external_subset(const std::filesystem::path& system_id) {
     // Treat external subset like a special external parameter entity.
     // External subset and external param entities are actually quite similar,
     // except external subset MUST be full markup (part of DTD after all).
-    EntityStream parameter_entity(system_id, true);
+    // DUMMY NAME i.e. empty string (no actual parameter entity can share the name).
+    EntityStream parameter_entity(system_id,  "");
     parameter_entity.is_parameter = true;
     parameter_entity.in_entity_value = false;
     this->external_dtd_content_active = true;
+    this->file_paths.push(parameter_entity.file_path);
     this->parameter_entity_stack.push(std::move(parameter_entity));
     this->parameter_entity_active = true;
 }
@@ -1207,13 +1270,16 @@ ElementContentModel Parser::parse_element_content_model(
     bool separator_next = false;
     while (true) {
         Char c = this->get(parameter_entities);
+        if (this->parameter_entity_stack.size() < parameter_entity_stack_size_before) {
+            // Opening and closing parentheses must be in same PE replacement text.
+            throw;
+        }
         if (is_whitespace(c)) {
             operator++();
             continue;
         }
         if (c == RIGHT_PARENTHESIS) {
             if (this->parameter_entity_stack.size() != parameter_entity_stack_size_before) {
-                // Opening and closing parentheses be in same PE replacement text.
                 throw;
             }
             operator++();
@@ -1285,13 +1351,16 @@ MixedContentModel Parser::parse_mixed_content_model(
     operator++();
     while (true) {
         Char c = this->get(parameter_entities);
+        if (this->parameter_entity_stack.size() < parameter_entity_stack_size_before) {
+            // Opening and closing parentheses must be in same PE replacement text.
+            throw;
+        }
         if (is_whitespace(c)) {
             operator++();
             continue;
         }
         if (c == RIGHT_PARENTHESIS) {
             if (this->parameter_entity_stack.size() != parameter_entity_stack_size_before) {
-                // Opening and closing parentheses be in same PE replacement text.
                 throw;
             }
             operator++();
@@ -1359,7 +1428,7 @@ void Parser::parse_attribute_list_declaration(DoctypeDeclaration& dtd) {
 
 void Parser::parse_attribute_declaration(DoctypeDeclaration& dtd, AttributeListDeclaration& attlist) {
     AttributeDeclaration ad;
-    ad.name = this->parse_name(WHITESPACE, true, &dtd.parameter_entities);
+    ad.name = this->parse_name(WHITESPACE, true, &dtd.parameter_entities, &SPECIAL_ATTRIBUTE_NAMES);
     this->ignore_whitespace(dtd.parameter_entities);
     if (this->get(dtd.parameter_entities) == LEFT_PARENTHESIS) {
         // Can only be an enumeration.
@@ -1389,9 +1458,17 @@ void Parser::parse_attribute_declaration(DoctypeDeclaration& dtd, AttributeListD
         ad.default_value = this->parse_attribute_value(dtd, true, false);
     }
     // If the same attribute name is declared multiple times, only the first one counts.
-    // Ignore repeat declaration. Be lenient and do not even validate (assume this is right).
+    // Ignore repeat declaration.
     if (attlist.count(ad.name)) {
         return;
+    }
+    // Special attributes validation.
+    if (ad.name == XML_SPACE) {
+        if (
+            ad.type != AttributeType::enumeration || !XML_SPACE_ENUMS.count(ad.enumeration)
+        ) {
+            throw;
+        }
     }
     ad.from_external = this->external_dtd_content_active;
     // Register for now, validate later.

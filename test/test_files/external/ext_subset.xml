@@ -1,4 +1,5 @@
 <?xml version="1.0" encoding="UTF-8"?>
+<!ENTITY extext SYSTEM "./basic.xml">
 <!-- Basic example of an external DTD subset!!! -->
 <!ENTITY % product-contents "(primary-image?, image+, review*)">
 <!ELEMENT product %product-contents;>

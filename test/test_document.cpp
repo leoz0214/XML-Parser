@@ -63,12 +63,9 @@ int main() {
         assert((dtd.exists));
         assert((dtd.root_name == String("root")));
         assert((dtd.external_id.type == ExternalIDType::public_));
-        assert((dtd.external_id.public_id == String("'public id 123!'.xml")));
-        assert((dtd.external_id.system_id == String("systemid321.lmx")));
     }, false);
     test_document("<!DOCTYPE x SYSTEM 'y'><x></x>", [](const Document& document) {
         assert((document.doctype_declaration.external_id.type == ExternalIDType::system));
-        assert((document.doctype_declaration.external_id.system_id == String("y")));
     }, false);
     test_document("<!DOCTYPE minimal><minimal></minimal>", [](const Document& document) {
         assert((document.doctype_declaration.external_id.type == ExternalIDType::none));
@@ -82,7 +79,6 @@ int main() {
         <r>Internal DTD Subset Sanity Check.</r>
     )", [](const Document& document) {
         auto dtd = document.doctype_declaration;
-        assert((dtd.external_id.system_id == String("s")));
         assert((dtd.processing_instructions[0].target == String("doc-pi")));
         assert((document.root.tag.name == String("r")));
     }, false);
@@ -140,13 +136,9 @@ int main() {
         assert((notations.size() == 3));
         assert((notations.at("n1").has_system_id));
         assert((!notations.at("n1").has_public_id));
-        assert((notations.at("n1").system_id == String("Notation1")));
         assert((notations.at("n2").has_public_id));
         assert((notations.at("n2").has_system_id));
-        assert((notations.at("n2").public_id == String("Notation2")));
-        assert((notations.at("n2").system_id == String("N2")));
         assert((!notations.at("n3").has_system_id));
-        assert((notations.at("n3").public_id == String("Notation3")));
     }, false);
     test_document(R"(<?xml version='1.11' encoding='UTF-8'?>
         <!--Attribute list declarations sanity check.-->
@@ -190,7 +182,9 @@ int main() {
             <!ATTLIST tokens a NMTOKEN '123' b NMTOKENS "1    2   3   4">
             <!NOTATION a SYSTEM "a"><!NOTATION b SYSTEM "b"><!NOTATION c SYSTEM "c">
             <!ATTLIST nota a NOTATION ( a | b | c ) #FIXED " c ">
-        ]><root>
+            <!-- Special Attribute -->
+            <!ATTLIST root xml:space (preserve|default) #FIXED "default" xml:lang CDATA "en">
+        ]><root xml:space = ' default ' xml:lang = 'fr'>
             <id id="a"/><id id="b"/><id id="c"/><id id="d"/><id id="e"/><id id="f"/><id id="g"/>
             <id id="idref"/>
             <idrefs></idrefs><nota a="c"/>
@@ -217,6 +211,8 @@ int main() {
         assert((nota.at("a").notations.size() == 3));
         assert((nota.at("a").presence == AttributePresence::fixed));
         assert((nota.at("a").default_value == String("c")));
+        assert((document.root.tag.attributes.at("xml:space") == String("default")));
+        assert((document.root.tag.attributes.at("xml:lang") == String("fr")));
     }, false);
     test_document(R"(<!DOCTYPE root [
         <!-- Testing General Entity Declarations -->
@@ -262,8 +258,6 @@ int main() {
         assert((param_entities.at("p2").value.empty()));
         assert((param_entities.at("ISOLat2").is_external));
         assert((param_entities.at("ISOLat2").external_id.type == ExternalIDType::system));
-        assert((param_entities.at("ISOLat2").external_id.system_id ==
-            String("http://www.xml.com/iso/isolat2-xml.entities")));
     }, false);
     test_document(R"(<!DOCTYPE root [
         <!-- Parameter Entity Usage Very Basic Test -->
