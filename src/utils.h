@@ -104,7 +104,7 @@ bool valid_character(Char);
 static CharacterRanges NAME_START_CHARACTER_RANGES({
     {':', ':'}, {'A', 'Z'}, {'_', '_'}, {'a', 'z'}, {0xC0, 0xD6}, {0xD8, 0xF6}, {0xF8, 0x2FF},
     {0x370, 0x37D}, {0x37F, 0x1FFF}, {0x200C, 0x200D}, {0x2070, 0x218F}, {0x2C00, 0x2FEF},
-    {0x3001, 0xD7F}, {0xF900, 0xFDCF}, {0xFDF0, 0xFFFD}, {0x10000, 0xEFFFF}
+    {0x3001, 0xD7FF}, {0xF900, 0xFDCF}, {0xFDF0, 0xFFFD}, {0x10000, 0xEFFFF}
 }, character_ranges_comparator);
 static CharacterRanges NAME_CHARACTER_RANGES = []() {
     CharacterRanges character_ranges = NAME_START_CHARACTER_RANGES;
@@ -367,6 +367,10 @@ static String CONDITIONAL_TYPE_NAME_TERMINATORS = []() {
     valid_chars.push_back(LEFT_SQUARE_BRACKET);
     return valid_chars;
 }();
+
+// Basic handling of URL resources instead of file paths.
+static std::set<String> RECOGNISED_PROTOCOLS {"http://", "https://"};
+bool is_url_resource(const std::string&);
 
 // Ultimate document class - contains everything about the XML document.
 struct Document {

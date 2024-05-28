@@ -9,5 +9,8 @@
 <!ATTLIST review stars NMTOKEN "3">
 <!NOTATION Products SYSTEM "products.db">
 <!ENTITY img-ext ".png">
+
+<!ELEMENT example ANY>
+<!ATTLIST example att CDATA #IMPLIED>
 <?processor prod_proc.exe?>
 <!-- END OF EXTERNAL DTD SUBSET-->

@@ -90,6 +90,8 @@ int main() {
     }, false);
     test_document_file("notation_decls.xml", [](const Document& document) {
         auto decls = document.doctype_declaration.notation_declarations;
+        assert((decls.at("Example").system_id
+            == std::filesystem::path("test/test_files/external/ PUBLIC ")));
     }, false);
     test_document_file("ext_subset.xml", [](const Document& document) {
         auto dtd = document.doctype_declaration;

@@ -12,4 +12,6 @@
         <primary-image href="chk-bgr&img-ext;"/>
         <review stars="5">Juicy.</review>
     </product>
+    <!-- A little extra -->
+    %extext;
 </products>

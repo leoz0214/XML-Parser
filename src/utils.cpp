@@ -297,4 +297,15 @@ String expand_character_entities(const String& string) {
     return result;
 }
 
+bool is_url_resource(const std::string& file_path) {
+    String url;
+    for (char c : file_path) {
+        url.push_back(std::tolower(c));
+        if (RECOGNISED_PROTOCOLS.count(url)) {
+            return true;
+        }
+    }
+    return false;
+}
+
 }

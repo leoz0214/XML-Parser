@@ -193,6 +193,19 @@ Char Parser::get(const GeneralEntities& general_entities, bool in_attribute_valu
             return this->parse_character_entity();
         }
         this->parse_general_entity(general_entities, in_attribute_value);
+        if (this->general_entity_stack.top().eof()) {
+            // Empty entity value - immediately the end.
+            if (this->general_entity_eof()) {
+                this->end_general_entity();
+            } else {
+                this->general_entity_names.erase(this->general_entity_stack.top().name);
+                if (this->general_entity_stack.top().is_external) {
+                    this->file_paths.pop();
+                }
+                this->general_entity_stack.pop();
+            }
+            return this->get(general_entities, in_attribute_value);
+        }
         return this->general_entity_stack.top().get();
     }
     return c;
@@ -419,9 +432,12 @@ String Parser::parse_entity_value(const DoctypeDeclaration& dtd) {
                 // General entity (bypass - store actual entity ref
                 // in the value of current entity - not replacement text).
                 value.push_back(AMPERSAND);
-                for (Char c : this->parse_general_entity_name(dtd.general_entities)) {
-                    value.push_back(c);
+                String name = this->parse_general_entity_name(dtd.general_entities);
+                if (dtd.general_entities.count(name) && dtd.general_entities.at(name).is_unparsed) {
+                    // Cannot have ref to unparsed entity here.
+                    throw;
                 }
+                value.insert(value.end(), name.begin(), name.end());
                 value.push_back(SEMI_COLON);
             }
         } else {
@@ -463,10 +479,6 @@ String Parser::parse_general_entity_name(const GeneralEntities& general_entities
             throw;
         }
         name.push_back(c);
-    }
-    if (!general_entities.count(name)) {
-        // General entity name is not declared.
-        throw;
     }
     return name;
 }
@@ -580,7 +592,7 @@ void Parser::parse_parameter_entity(const ParameterEntities& parameter_entities,
 
 std::filesystem::path Parser::get_file_path() {
     if (this->file_paths.empty()) {
-        return std::filesystem::current_path();
+        return std::filesystem::path();
     }
     return this->file_paths.top().parent_path();
 }
@@ -972,15 +984,15 @@ void Parser::parse_xml_declaration(Document& document) {
     }
 }
 
-std::filesystem::path Parser::parse_public_id(const ParameterEntities* parameter_entities) {
-    Char quote = parameter_entities != nullptr ? this->get(*parameter_entities) : this->get();
+std::filesystem::path Parser::parse_public_id() {
+    Char quote = this->get();
     operator++();
     if (quote != SINGLE_QUOTE && quote != DOUBLE_QUOTE) {
         throw;
     }
     String public_id;
     while (true) {
-        Char c = parameter_entities != nullptr ? this->get(*parameter_entities) : this->get();
+        Char c = this->get();
         operator++();
         if (c == quote) {
             break;
@@ -991,21 +1003,21 @@ std::filesystem::path Parser::parse_public_id(const ParameterEntities* parameter
         public_id.push_back(c);
     }
     std::filesystem::path result = std::string(public_id);
-    if (result.is_relative()) {
+    if (result.is_relative() && !is_url_resource(result.string())) {
         result = (this->get_file_path() / result).lexically_normal();
     }
     return result;
 }
 
-std::filesystem::path Parser::parse_system_id(const ParameterEntities* parameter_entities) {
-    Char quote = parameter_entities != nullptr ? this->get(*parameter_entities) : this->get();
+std::filesystem::path Parser::parse_system_id() {
+    Char quote = this->get();
     operator++();
     if (quote != SINGLE_QUOTE && quote != DOUBLE_QUOTE) {
         throw;
     }
     String system_id;
     while (true) {
-        Char c = parameter_entities != nullptr ? this->get(*parameter_entities) : this->get();
+        Char c = this->get();
         operator++();
         if (c == quote) {
             break;
@@ -1016,7 +1028,7 @@ std::filesystem::path Parser::parse_system_id(const ParameterEntities* parameter
         system_id.push_back(c);
     }
     std::filesystem::path result = std::string(system_id);
-    if (result.is_relative()) {
+    if (result.is_relative() && !is_url_resource(result.string())) {
         result = (this->get_file_path() / result).lexically_normal();
     }
     return result;
@@ -1033,7 +1045,7 @@ ExternalID Parser::parse_external_id(const ParameterEntities* parameter_entities
         this->ignore_whitespace();
     }
     if (external_id.type == ExternalIDType::public_) {
-        external_id.public_id = this->parse_public_id(parameter_entities);
+        external_id.public_id = this->parse_public_id();
         if (!is_whitespace(parameter_entities != nullptr ? this->get(*parameter_entities) : this->get())) {
             // Min 1 whitespace between public/system ID.
             throw;
@@ -1044,7 +1056,7 @@ ExternalID Parser::parse_external_id(const ParameterEntities* parameter_entities
             this->ignore_whitespace();
         }
     }
-    external_id.system_id = this->parse_system_id(parameter_entities);
+    external_id.system_id = this->parse_system_id();
     return external_id;
 }
 
@@ -1062,6 +1074,9 @@ void Parser::parse_dtd_subsets(DoctypeDeclaration& dtd, bool external_subset_sta
                 // End of external subset reached.
                 return;
             }
+        }
+        if (this->parameter_entity_stack.size() < initial_parameter_entity_stack_size) {
+            throw;
         }
         Char c = this->get(dtd.parameter_entities, false);
         operator++();
@@ -1133,7 +1148,7 @@ void Parser::start_external_subset(const std::filesystem::path& system_id) {
     // External subset and external param entities are actually quite similar,
     // except external subset MUST be full markup (part of DTD after all).
     // DUMMY NAME i.e. empty string (no actual parameter entity can share the name).
-    EntityStream parameter_entity(system_id,  "");
+    EntityStream parameter_entity(system_id, "");
     parameter_entity.is_parameter = true;
     parameter_entity.in_entity_value = false;
     this->external_dtd_content_active = true;
@@ -1630,10 +1645,10 @@ void Parser::parse_notation_declaration(DoctypeDeclaration& dtd) {
     if (type == String("SYSTEM")) {
         nd.has_public_id = false;
         nd.has_system_id = true;
-        nd.system_id = this->parse_system_id(&dtd.parameter_entities);
+        nd.system_id = this->parse_system_id();
     } else if (type == String("PUBLIC")) {
         nd.has_public_id = true;
-        nd.public_id = this->parse_public_id(&dtd.parameter_entities);
+        nd.public_id = this->parse_public_id();
         bool whitespace_seen = false;
         while (is_whitespace(this->get(dtd.parameter_entities))) {
             operator++();
@@ -1646,7 +1661,7 @@ void Parser::parse_notation_declaration(DoctypeDeclaration& dtd) {
                 throw;
             }
             // System ID is optional but does appear to exist here.
-            nd.system_id = this->parse_system_id(&dtd.parameter_entities);
+            nd.system_id = this->parse_system_id();
         }
     } else {
         // Not SYSTEM or PUBLIC -> invalid.

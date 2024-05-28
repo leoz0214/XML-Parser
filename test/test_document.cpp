@@ -136,8 +136,10 @@ int main() {
         assert((notations.size() == 3));
         assert((notations.at("n1").has_system_id));
         assert((!notations.at("n1").has_public_id));
+        assert((notations.at("n1").system_id.filename() == std::filesystem::path("Notation1")));
         assert((notations.at("n2").has_public_id));
         assert((notations.at("n2").has_system_id));
+        assert((notations.at("n2").public_id.filename() == std::filesystem::path("Notation2")));
         assert((!notations.at("n3").has_system_id));
     }, false);
     test_document(R"(<?xml version='1.11' encoding='UTF-8'?>
@@ -237,8 +239,12 @@ int main() {
         assert((general_entities.at("g2").value == String("value\"2\"")));
         assert((general_entities.at("open-hatch").is_external));
         assert((general_entities.at("open-hatch").external_id.type == ExternalIDType::system));
+        assert((general_entities.at("open-hatch").external_id.system_id
+            == std::filesystem::path("http://www.textuality.com/boilerplate/OpenHatch.xml")));
         assert((general_entities.at("open-hatch2").is_external));
         assert((general_entities.at("open-hatch2").external_id.type == ExternalIDType::public_));
+        assert((general_entities.at("open-hatch2").external_id.system_id.parent_path()
+            == std::filesystem::path("http://www.textuality.com/boilerplate")));
         assert((general_entities.at("hatch-pic").is_external));
         assert((general_entities.at("hatch-pic").is_unparsed));
         assert((general_entities.at("hatch-pic").notation_name == String("gif")));

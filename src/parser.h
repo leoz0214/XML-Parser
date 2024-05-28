@@ -91,8 +91,8 @@ class Parser {
     ProcessingInstruction parse_processing_instruction(bool detect_xml_declaration = false);
     void parse_xml_declaration(Document&);
     DoctypeDeclaration parse_doctype_declaration();
-    std::filesystem::path parse_public_id(const ParameterEntities* parameter_entities = nullptr);
-    std::filesystem::path parse_system_id(const ParameterEntities* parameter_entities = nullptr);
+    std::filesystem::path parse_public_id();
+    std::filesystem::path parse_system_id();
     ExternalID parse_external_id(const ParameterEntities* parameter_entities = nullptr);
     void parse_dtd_subsets(DoctypeDeclaration&, bool = false, bool = false);
     void start_external_subset(const std::filesystem::path&);
