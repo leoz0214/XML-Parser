@@ -43,12 +43,6 @@ class StringBuffer : public std::streambuf {
 class XmlError : public std::runtime_error {
     using std::runtime_error::runtime_error;
 };
-// Used in the file path stack.
-struct Resource {
-    std::filesystem::path path;
-    bool is_parameter = false;
-    Resource(const std::filesystem::path&, bool);
-};
 
 // Character constants.
 constexpr char LEFT_ANGLE_BRACKET = '<';

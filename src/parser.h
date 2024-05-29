@@ -3,6 +3,7 @@
 #include <filesystem>
 #include <functional>
 #include <istream>
+#include <map>
 #include <memory>
 #include <string>
 #include <utility>
@@ -53,7 +54,8 @@ class Parser {
     std::stack<EntityStream> general_entity_stack;
     std::stack<EntityStream> parameter_entity_stack;
     // Track file paths. Assume main doc in CWD.
-    std::stack<Resource> resource_paths;
+    std::stack<std::filesystem::path> resource_paths;
+    std::map<std::filesystem::path, EntityStream*> resource_to_stream;
     // Track seen entity names to detect self references (avoid infinite recursion).
     std::set<String> general_entity_names;
     std::set<String> parameter_entity_names;

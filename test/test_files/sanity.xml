@@ -1,8 +1,8 @@
-<?xml version="1.0" encoding="UTF-8"?>
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <!-- The simplest of XML files solely to ensure
     file stream works properly with parser -->
 <body title="XML File Test">
     <h1>XML FILE TEST</h1>
     <p>XML is powerful</p>
-    <metadata test="yes"/>
+    <metadata test = "yes"/>
 </body>

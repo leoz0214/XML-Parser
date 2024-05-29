@@ -34,7 +34,7 @@ String::operator std::string() const {
     for (Char c : *this) {
         if (c < 0) {
             // Invalid character.
-            throw;
+            throw XmlError("Invalid character in String");
         }
         if (c <= UTF8_BYTE_LIMITS[0]) {
             // Just ASCII.
@@ -42,7 +42,7 @@ String::operator std::string() const {
             continue;
         } else if (c >= UTF8_BYTE_LIMITS[3]) {
             // Too large
-            throw;
+            throw XmlError("Invalid character in String");
         }
         int bytes = c <= UTF8_BYTE_LIMITS[1] ? 2 : c <= UTF8_BYTE_LIMITS[2] ? 3 : 4;
         char byte1 = bytes == 2 ? 0b11000000 : bytes == 3 ? 0b11100000 : 0b11110000;
@@ -72,7 +72,7 @@ Char parse_utf8(std::istream& istream) {
     }
     // Validate indeed 2-4 bytes, and not invalid Unicode byte.
     if (sig_1s < 2 || sig_1s > 4) {
-        throw;
+        throw XmlError("Invalid UTF-8 byte");
     }
     // First byte has (8-n-1) bytes of interest where n is number of leading 1s
     Char char_value = current_char & (0b11111111 >> sig_1s);
@@ -80,11 +80,11 @@ Char parse_utf8(std::istream& istream) {
     for (int offset = 1; offset < sig_1s; ++offset) {
         char byte = istream.get();
         if (byte == EOF) {
-            throw;
+            throw XmlError("Incomplete UTF-8 character");
         }
         // Ensure byte starts with 10......
         if ((byte & 0b10000000) == 0 || (byte & 0b01000000) == 1)  {
-            throw;
+            throw XmlError("Invalid UTF-8 byte");
         }
         char_value <<= 6;
         char_value += byte & 0b00111111;
@@ -99,11 +99,6 @@ StringBuffer::StringBuffer(const std::string& string) {
 
 GeneralEntity::GeneralEntity(const String& value) {
     this->value = value;
-}
-
-Resource::Resource(const std::filesystem::path& path, bool is_parameter) {
-    this->path = path;
-    this->is_parameter = is_parameter;
 }
 
 bool is_whitespace(Char c) {
@@ -249,7 +244,7 @@ Char parse_character_reference(const String& string) {
     }
     if (c == SEMI_COLON) {
         // Cannot be empty.
-        throw;
+        throw XmlError("Character reference must contain at least one digit");
     }
     Char char_value = 0;
     while (true) {
@@ -259,23 +254,23 @@ Char parse_character_reference(const String& string) {
         }
         if (is_hex) {
             if (!std::isxdigit(c)) {
-                throw;
+                throw XmlError("Invalid hexadecimal (0-F) digit");
             }
             int digit_value = c >= 'a' ? c - 'a' + 10 : c - '0';
             char_value = char_value * 16 + digit_value;
         } else {
             if (!std::isdigit(c)) {
-                throw;
+                throw XmlError("Invalid denary (0-9) digit");
             }
             char_value = char_value * 10 + (c - '0');
         }
         // Sanity range check, avoiding overflow.
         if (char_value > 2'000'000) {
-            throw;
+            throw XmlError("Invalid character");
         }
     }
     if (!valid_character(char_value)) {
-        throw;
+        throw XmlError("Invalid character");
     }
     return char_value;
 }

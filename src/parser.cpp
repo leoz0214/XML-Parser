@@ -178,10 +178,14 @@ Char Parser::get() {
         throw XmlError("End of data reached unexpectedly");
     }
     Char c;
-    if (std::holds_alternative<unique_istream_ptr>(this->stream)) {
-        c = parse_utf8(*std::get<unique_istream_ptr>(this->stream));
-    } else {
-        c = parse_utf8(*std::get<std::istream*>(this->stream));
+    try {
+        if (std::holds_alternative<unique_istream_ptr>(this->stream)) {
+            c = parse_utf8(*std::get<unique_istream_ptr>(this->stream));
+        } else {
+            c = parse_utf8(*std::get<std::istream*>(this->stream));
+        }
+    } catch (const XmlError& e) {
+        throw this->get_error_object(e.what());
     }
     if (c == LINE_FEED && just_parsed_carriage_return) {
         operator++();
@@ -480,7 +484,11 @@ Char Parser::parse_character_reference() {
         }
     }
     this->just_parsed_character_reference = true;
-    return xml::parse_character_reference(string);
+    try {
+        return xml::parse_character_reference(string);
+    } catch (const XmlError& e) {
+        throw this->get_error_object(e.what());
+    }
 }
 
 String Parser::parse_general_entity_name(const GeneralEntities& general_entities) {
@@ -525,7 +533,8 @@ void Parser::parse_general_entity(const GeneralEntities& general_entities, bool 
             throw this->get_error_object("No external entities in attribute values");
         }
         this->general_entity_stack.push({general_entities.at(name).external_id.system_id, name});
-        this->resource_paths.push({this->general_entity_stack.top().file_path, false});
+        this->resource_paths.push({this->general_entity_stack.top().file_path});
+        this->resource_to_stream[this->resource_paths.top()] = &this->general_entity_stack.top();
     } else {
         this->general_entity_stack.push({general_entities.at(name).value, name});
     }
@@ -599,11 +608,12 @@ void Parser::parse_parameter_entity(const ParameterEntities& parameter_entities,
     if (this->parameter_entity_stack.empty()) {
         this->external_dtd_content_active = parameter_entity.is_external;
     }
-    if (parameter_entity.is_external) {
-        this->resource_paths.push({parameter_entity.file_path, true});
-    }
     this->parameter_entity_stack.push(std::move(parameter_entity));
     this->parameter_entity_active = true;
+    if (this->parameter_entity_stack.top().is_external) {
+        this->resource_paths.push({this->parameter_entity_stack.top().file_path});
+        this->resource_to_stream[this->resource_paths.top()] = &this->parameter_entity_stack.top();
+    }
 }
 
 std::filesystem::path Parser::get_folder_path() {
@@ -611,7 +621,7 @@ std::filesystem::path Parser::get_folder_path() {
 }
 
 std::filesystem::path Parser::get_file_path() {
-    return this->resource_paths.empty() ? std::filesystem::path() : this->resource_paths.top().path;
+    return this->resource_paths.empty() ? std::filesystem::path() : this->resource_paths.top();
 }
 
 void Parser::end_parameter_entity() {
@@ -631,7 +641,7 @@ std::pair<String, String> Parser::parse_attribute(
     // Ignore whitespace until '=' is reached.
     this->ignore_whitespace();
     if (this->get() != EQUAL) {
-        throw;
+        throw this->get_error_object("Expected '='");
     }
     // Increment the '='
     operator++();
@@ -663,7 +673,7 @@ Tag Parser::parse_tag(const DoctypeDeclaration& dtd) {
             if (c == TAG_CLOSE) {
                 break;
             } if (!is_whitespace(c)) {
-                throw;
+                throw this->get_error_object("Expected '>'");
             }
         }
     } else {
@@ -683,7 +693,7 @@ Tag Parser::parse_tag(const DoctypeDeclaration& dtd) {
                 c = this->get();
                 operator++();
                 if (c != TAG_CLOSE) {
-                    throw;
+                    throw this->get_error_object("Expected '>'");
                 }
                 break;
             }
@@ -694,8 +704,7 @@ Tag Parser::parse_tag(const DoctypeDeclaration& dtd) {
             // Not end or whitespace, so must be an attribute.
             std::pair<String, String> attribute = this->parse_attribute(dtd, true, false, &tag.name);
             if (tag.attributes.count(attribute.first)) {
-                // Duplicate attribute names in same element prohibited.
-                throw;
+                throw this->get_error_object("Duplicate attribute name in the same element");
             }
             tag.attributes.insert(attribute);
         }
@@ -704,8 +713,9 @@ Tag Parser::parse_tag(const DoctypeDeclaration& dtd) {
             for (const auto& [attribute_name, attribute] : dtd.attribute_list_declarations.at(tag.name)) {
                 if (!tag.attributes.count(attribute_name) && attribute.has_default_value) {
                     if (attribute.from_external && this->standalone) {
-                        // Default attribute values from external cannot be used in standalone doc.
-                        throw;
+                        throw this->get_error_object(
+                            "Default attribute value declared externally "
+                            "cannot be used in standalone document");
                     }
                     tag.attributes[attribute_name] = attribute.default_value;
                 }
@@ -720,19 +730,20 @@ void Parser::parse_comment() {
     Char prev_char = -1;
     while (true) {
         Char c = this->get();
-        operator++();
         if (c == HYPHEN && prev_char == HYPHEN) {
             // -- found, needs to be closing part of comment otherwise invalid.
+            operator++();
             if (this->get() == RIGHT_ANGLE_BRACKET) {
                 operator++();
                 return;
             }
-            throw;
+            throw this->get_error_object("'--' disallowed in comment");
         }
         if (!valid_character(c)) {
-            throw;
+            throw this->get_error_object("Invalid character");
         }
         prev_char = c;
+        operator++();
     }
 }
 
@@ -742,23 +753,24 @@ String Parser::parse_cdata() {
     Char prev_char = -1;
     while (true) {
         Char c = this->get();
-        operator++();
         // Note, CDATA section must end in ]]>
         if (
             c == RIGHT_ANGLE_BRACKET && prev_char == RIGHT_SQUARE_BRACKET
             && prev_prev_char == RIGHT_SQUARE_BRACKET
         ) {
+            operator++();
             // Need to remove ending ]]
             cdata.pop_back();
             cdata.pop_back();
             break;
         }
         if (!valid_character(c)) {
-            throw;
+            throw this->get_error_object("Invalid character");
         }
         cdata.push_back(c);
         prev_prev_char = prev_char;
         prev_char = c;
+        operator++();
     }
     return cdata;
 }
@@ -773,7 +785,8 @@ ProcessingInstruction Parser::parse_processing_instruction(bool detect_xml_decla
         if (detect_xml_declaration && pi.target == String("xml")) {
             return pi;
         }
-        throw;
+        throw this->get_error_object(
+            "Processing instruction target name must not start with 'xml' (case-insensitive)");
     }
     if (this->get() != QUESTION_MARK) {
         // Increment whitespace.
@@ -782,18 +795,19 @@ ProcessingInstruction Parser::parse_processing_instruction(bool detect_xml_decla
     Char prev_char = -1;
     while (true) {
         Char c = this->get();
-        operator++();
         // Closed with ?>
         if (c == RIGHT_ANGLE_BRACKET && prev_char == QUESTION_MARK) {
+            operator++();
             // Need to remove ending ?
             pi.instruction.pop_back();
             break;
         }
         if (!valid_character(c)) {
-            throw;
+            throw this->get_error_object("Invalid character");
         }
         pi.instruction.push_back(c);
         prev_char = c;
+        operator++();
     }
     return pi;
 }
@@ -810,8 +824,7 @@ Element Parser::parse_element(const DoctypeDeclaration& dtd, bool allow_end) {
                 // Only as the end tag of a parent element.
                 return element;
             }
-            // Cannot have end tag at this time.
-            throw;
+            throw this->get_error_object("Not expecting end tag");
         case TagType::empty:
             return element;
     }
@@ -855,7 +868,7 @@ Element Parser::parse_element(const DoctypeDeclaration& dtd, bool allow_end) {
                                 operator++();
                                 if (this->get() != HYPHEN) {
                                     // Not starting with <!--
-                                    throw;
+                                    throw this->get_error_object("Unexpected character");
                                 }
                                 operator++();
                                 this->parse_comment();
@@ -866,7 +879,7 @@ Element Parser::parse_element(const DoctypeDeclaration& dtd, bool allow_end) {
                                 String required_chars("CDATA[");
                                 for (Char required : required_chars) {
                                     if (this->get() != required) {
-                                        throw;
+                                        throw this->get_error_object("Unexpected character");
                                     }
                                     operator++();
                                 }
@@ -877,7 +890,7 @@ Element Parser::parse_element(const DoctypeDeclaration& dtd, bool allow_end) {
                                 break;
                             }
                             default:
-                                throw;
+                                throw this->get_error_object("Unexpected character");
                         }
                         break;
                     case QUESTION_MARK:
@@ -890,9 +903,9 @@ Element Parser::parse_element(const DoctypeDeclaration& dtd, bool allow_end) {
                         // Must be child element or erroneous.
                         Element child = this->parse_element(dtd, true);
                         if (child.tag.type == TagType::end) {
-                            // If closing tag same name, then element successfully closed.
                             if (child.tag.name != tag.name) {
-                                throw;
+                                throw this->get_error_object(
+                                    "End tag name must match start tag name");
                             }
                             goto done;
                         }
@@ -907,7 +920,7 @@ Element Parser::parse_element(const DoctypeDeclaration& dtd, bool allow_end) {
                     && *(char_data.end() - 1) == RIGHT_SQUARE_BRACKET
                     && *(char_data.end() - 2) == RIGHT_SQUARE_BRACKET
                 ) {
-                    throw;
+                    throw this->get_error_object("']]>' literal disallowed in character data");
                 }
                 char_data.push_back(c);
                 operator++();
@@ -916,7 +929,7 @@ Element Parser::parse_element(const DoctypeDeclaration& dtd, bool allow_end) {
             default:
                 // Any other character continues on the character data if valid.
                 if (!valid_character(c)) {
-                    throw;
+                    throw this->get_error_object("Invalid character");
                 }
                 operator++();
                 char_data.push_back(c);
@@ -929,7 +942,8 @@ Element Parser::parse_element(const DoctypeDeclaration& dtd, bool allow_end) {
     done:;
     // General entities not properly closed.
     if (this->general_entity_stack.size() != general_entity_stack_size_before) {
-        throw;
+        throw this->get_error_object(
+            "Element must start and end in the same entity replacement text");
     }
     return element;
 }
@@ -954,7 +968,7 @@ void Parser::parse_xml_declaration(Document& document) {
         if (c == QUESTION_MARK) {
             operator++();
             if (this->get() != RIGHT_ANGLE_BRACKET) {
-                throw;
+                throw this->get_error_object("Expected '>'");
             }
             operator++();
             break;
@@ -962,8 +976,11 @@ void Parser::parse_xml_declaration(Document& document) {
         std::pair<String, String> attribute = this->parse_attribute(document.doctype_declaration, false);
         if (attribute.first == XML_DECLARATION_VERSION_NAME) {
             String& version = attribute.second;
-            if (!version_info_possible || !valid_version(version)) {
-                throw;
+            if (!version_info_possible) {
+                throw this->get_error_object("Document version cannot be specified here");
+            }
+            if (!valid_version(version)) {
+                throw this->get_error_object("Invalid document version");
             }
             version_info_parsed = true;
             version_info_possible = false;
@@ -971,33 +988,37 @@ void Parser::parse_xml_declaration(Document& document) {
         } else if (attribute.first == XML_DECLARATION_ENCODING_NAME) {
             String& encoding = attribute.second;
             if (!encoding_declaration_possible) {
-                throw;
+                throw this->get_error_object("Document encoding cannot be specified here");
             }
             // case-insensitive
             std::transform(encoding.begin(), encoding.end(), encoding.begin(), [](Char c) {
                 return std::tolower(c);
             });
             if (!valid_encoding(encoding)) {
-                throw;
+                throw this->get_error_object("Unsupported document encoding");
             }
             version_info_possible = false;
             encoding_declaration_possible = false;
             document.encoding = encoding;
         } else if (attribute.first == XML_DECLARATION_STANDALONE_NAME) {
             if (!standalone_declaration_possible) {
-                throw;
+                throw this->get_error_object("Standalone declaration cannot be specified here");
             }
             version_info_possible = false;
             encoding_declaration_possible = false;
             standalone_declaration_possible = false;
-            document.standalone = get_standalone_value(attribute.second);
+            try {
+                document.standalone = get_standalone_value(attribute.second);
+            } catch (const std::out_of_range&) {
+                throw this->get_error_object("Standalone declaration must be 'yes' or 'no'");
+            }
         } else {
             // Unknown XML declaration attribute.
-            throw;
+            throw this->get_error_object("Unkown XML declaration specifier");
         }
     }
     if (!version_info_parsed) {
-        throw;
+        throw this->get_error_object("Document version must be specified in XML declaration");
     }
 }
 
@@ -1005,19 +1026,20 @@ std::filesystem::path Parser::parse_public_id() {
     Char quote = this->get();
     operator++();
     if (quote != SINGLE_QUOTE && quote != DOUBLE_QUOTE) {
-        throw;
+        throw this->get_error_object("Public ID literal must start with a quote");
     }
     String public_id;
     while (true) {
         Char c = this->get();
-        operator++();
         if (c == quote) {
+            operator++();
             break;
         }
         if (!valid_public_id_character(c)) {
-            throw;
+            throw this->get_error_object("Invalid public ID character");
         }
         public_id.push_back(c);
+        operator++();
     }
     std::filesystem::path result = std::string(public_id);
     if (result.is_relative() && !is_url_resource(result.string())) {
@@ -1030,19 +1052,20 @@ std::filesystem::path Parser::parse_system_id() {
     Char quote = this->get();
     operator++();
     if (quote != SINGLE_QUOTE && quote != DOUBLE_QUOTE) {
-        throw;
+        throw this->get_error_object("System ID literal must start with a quote");
     }
     String system_id;
     while (true) {
         Char c = this->get();
-        operator++();
         if (c == quote) {
+            operator++();
             break;
         }
         if (!valid_character(c)) {
-            throw;
+            throw this->get_error_object("Invalid system ID character");
         }
         system_id.push_back(c);
+        operator++();
     }
     std::filesystem::path result = std::string(system_id);
     if (result.is_relative() && !is_url_resource(result.string())) {
@@ -1065,7 +1088,7 @@ ExternalID Parser::parse_external_id(const ParameterEntities* parameter_entities
         external_id.public_id = this->parse_public_id();
         if (!is_whitespace(parameter_entities != nullptr ? this->get(*parameter_entities) : this->get())) {
             // Min 1 whitespace between public/system ID.
-            throw;
+            throw this->get_error_object("Expected whitespace");
         }
         if (parameter_entities) {
             this->ignore_whitespace(*parameter_entities);
@@ -1093,13 +1116,13 @@ void Parser::parse_dtd_subsets(DoctypeDeclaration& dtd, bool external_subset_sta
             }
         }
         if (this->parameter_entity_stack.size() < initial_parameter_entity_stack_size) {
-            throw;
+            throw this->get_error_object("DTD subset must be in the same parameter entity text");
         }
         Char c = this->get(dtd.parameter_entities, false);
         operator++();
         if (c == RIGHT_SQUARE_BRACKET) {
             if (this->parameter_entity_stack.size() != initial_parameter_entity_stack_size) {
-                throw;
+                throw this->get_error_object("DTD subset must be in the same parameter entity text");
             }
             if (
                 !external_subset_started && dtd.external_id.type != ExternalIDType::none 
@@ -1127,22 +1150,22 @@ void Parser::parse_dtd_subsets(DoctypeDeclaration& dtd, bool external_subset_sta
                     continue;
                 }
                 // Not processing instruction.
-                throw;
+                throw this->get_error_object("Unexpected character");
             }
             operator++();
             if (this->get() == HYPHEN) {
                 // Comment or invalid.
                 operator++();
                 if (this->get() != HYPHEN) {
-                    throw;
+                    throw this->get_error_object("Unexpected character");
                 }
                 operator++();
                 this->parse_comment();
             } else if (this->get() == LEFT_SQUARE_BRACKET) {
                 // Conditional section or invalid.
                 if (!external_subset_started && !in_include) {
-                    // In internal dtd, cannot have conditional section.
-                    throw;
+                    throw this->get_error_object(
+                        "Suggests start of conditional section, disallowed in the internal DTD");
                 }
                 operator++();
                 this->parse_conditional_section(dtd, parameter_entity_stack_size_before);
@@ -1151,11 +1174,12 @@ void Parser::parse_dtd_subsets(DoctypeDeclaration& dtd, bool external_subset_sta
                 this->parse_markup_declaration(dtd);
             }
         } else {
-            throw;
+            throw this->get_error_object("Unexpected character");
         }
         int parameter_entity_stack_size_after = this->parameter_entity_stack.size();
         if (parameter_entity_stack_size_after != parameter_entity_stack_size_before) {
-            throw;
+            throw this->get_error_object(
+                "Entire markup declaration must be in same parameter entity text");
         }
     }
 }
@@ -1169,8 +1193,9 @@ void Parser::start_external_subset(const std::filesystem::path& system_id) {
     parameter_entity.is_parameter = true;
     parameter_entity.in_entity_value = false;
     this->external_dtd_content_active = true;
-    this->resource_paths.push({parameter_entity.file_path, true});
+    this->resource_paths.push({parameter_entity.file_path});
     this->parameter_entity_stack.push(std::move(parameter_entity));
+    this->resource_to_stream[this->resource_paths.top()] = &this->parameter_entity_stack.top();
     this->parameter_entity_active = true;
 }
 
@@ -1185,8 +1210,7 @@ void Parser::parse_markup_declaration(DoctypeDeclaration& dtd) {
     } else if (markup_declaration_type == String("NOTATION")) {
         this->parse_notation_declaration(dtd);
     } else {
-        // Unknown markup declaration type.
-        throw;
+        throw this->get_error_object("Unknown markup declaration type");
     }
 }
 
@@ -1198,7 +1222,8 @@ void Parser::parse_conditional_section(DoctypeDeclaration& dtd, int parameter_en
         this->get() != LEFT_SQUARE_BRACKET ||
         this->parameter_entity_stack.size() != parameter_entity_stack_size_before
     ) {
-        throw;
+        throw this->get_error_object(
+            "Entire conditional section must be in the same parameter entity text");
     }
     operator++();
     if (type == String("INCLUDE")) {
@@ -1207,7 +1232,7 @@ void Parser::parse_conditional_section(DoctypeDeclaration& dtd, int parameter_en
         this->parse_ignore_section();
     } else {
         // Neither INCLUDE nor IGNORE => Invalid.
-        throw;
+        throw this->get_error_object("Expected 'INCLUDE' or 'IGNORE'");
     }
 }
 
@@ -1215,11 +1240,11 @@ void Parser::parse_include_section(DoctypeDeclaration& dtd) {
     this->parse_dtd_subsets(dtd, false, true);
     // Must end on ]]> (first closing right square bracket already registered).
     if (this->get(dtd.parameter_entities) != RIGHT_SQUARE_BRACKET) {
-        throw;
+        throw this->get_error_object("Expected ']'");
     }
     operator++();
     if (this->get(dtd.parameter_entities) != RIGHT_ANGLE_BRACKET) {
-        throw;
+        throw this->get_error_object("Expected ']'");
     }
     operator++();
 }
@@ -1241,7 +1266,7 @@ void Parser::parse_ignore_section() {
             remaining_closures--;
         }
         if (!valid_character(c)) {
-            throw;
+            throw this->get_error_object("Invalid character");
         }
         prev2 = prev;
         prev = c;
@@ -1254,7 +1279,7 @@ void Parser::parse_element_declaration(DoctypeDeclaration& dtd) {
     element_declaration.name = this->parse_name(WHITESPACE, true, &dtd.parameter_entities);
     // Duplicate declarations for same element name illegal.
     if (dtd.element_declarations.count(element_declaration.name)) {
-        throw;
+        throw this->get_error_object("Element re-declaration");
     }
     this->ignore_whitespace(dtd.parameter_entities);
     // Empty, any, children, mixed OR invalid.
@@ -1283,12 +1308,12 @@ void Parser::parse_element_declaration(DoctypeDeclaration& dtd) {
         } else if (element_type == String("ANY")) {
             element_declaration.type = ElementType::any;
         } else {
-            throw;
+            throw this->get_error_object("Expected 'EMPTY' or 'ANY'");
         }
     }
     this->ignore_whitespace(dtd.parameter_entities);
     if (this->get(dtd.parameter_entities) != RIGHT_ANGLE_BRACKET) {
-        throw;
+        throw this->get_error_object("Expected '>'");
     }
     operator++();
     dtd.element_declarations[element_declaration.name] = element_declaration;
@@ -1303,8 +1328,9 @@ ElementContentModel Parser::parse_element_content_model(
     while (true) {
         Char c = this->get(parameter_entities);
         if (this->parameter_entity_stack.size() < parameter_entity_stack_size_before) {
-            // Opening and closing parentheses must be in same PE replacement text.
-            throw;
+            throw this->get_error_object(
+                "Opening and closing parentheses of element content model "
+                "must be in the same parameter entity text");
         }
         if (is_whitespace(c)) {
             operator++();
@@ -1312,15 +1338,24 @@ ElementContentModel Parser::parse_element_content_model(
         }
         if (c == RIGHT_PARENTHESIS) {
             if (this->parameter_entity_stack.size() != parameter_entity_stack_size_before) {
-                throw;
+                throw this->get_error_object(
+                    "Opening and closing parentheses of element content model "
+                    "must be in the same parameter entity text");
+            }
+            if (ecm.parts.empty()) {
+                throw this->get_error_object("Empty element content model");
+            }
+            if (!separator_next) {
+                throw this->get_error_object("Element content model cannot end on separator");
             }
             operator++();
-            // Cannot end on separator - ensure this is not case (also cannot be empty).
-            if (!separator_next) {
-                throw;
-            }
             if (ELEMENT_CONTENT_COUNT_SYMBOLS.count(this->get(parameter_entities))) {
-                ecm.count = ELEMENT_CONTENT_COUNT_SYMBOLS.at(this->get(parameter_entities));
+                try {
+                    ecm.count = ELEMENT_CONTENT_COUNT_SYMBOLS.at(this->get(parameter_entities));
+                } catch (const std::out_of_range&) {
+                    throw this->get_error_object(
+                        "Invalid element content count symbol (must be '*', '?', '+' or none)");
+                }
                 operator++();
             }
             break;
@@ -1329,13 +1364,13 @@ ElementContentModel Parser::parse_element_content_model(
             // Separator - ensure appropriate.
             if (!separator_next) {
                 // Not expecting separator at this time - invalid.
-                throw;
+                throw this->get_error_object("Unexpected separator");
             }
             if (separator_seen) {
                 // If not first separator, ensure consistent with previous seps.
                 // If it is sequence, expecting ',' else if choice, expecting '|'
                 if ((c == COMMA) != ecm.is_sequence) {
-                    throw;
+                    throw this->get_error_object("Inconsistent separator"); 
                 }
             } else {
                 // First separator.
@@ -1347,7 +1382,7 @@ ElementContentModel Parser::parse_element_content_model(
             // Element content part - sub-content-model or name.
             if (separator_next) {
                 // Expecting separator at this time, but not seen.
-                throw;
+                throw this->get_error_object("Expected separator");
             }
             if (c == LEFT_PARENTHESIS) {
                 int parameter_entity_stack_size = this->parameter_entity_stack.size();
@@ -1384,8 +1419,9 @@ MixedContentModel Parser::parse_mixed_content_model(
     while (true) {
         Char c = this->get(parameter_entities);
         if (this->parameter_entity_stack.size() < parameter_entity_stack_size_before) {
-            // Opening and closing parentheses must be in same PE replacement text.
-            throw;
+            throw this->get_error_object(
+                "Opening and closing parentheses of element content model "
+                "must be in the same parameter entity text");
         }
         if (is_whitespace(c)) {
             operator++();
@@ -1393,17 +1429,21 @@ MixedContentModel Parser::parse_mixed_content_model(
         }
         if (c == RIGHT_PARENTHESIS) {
             if (this->parameter_entity_stack.size() != parameter_entity_stack_size_before) {
-                throw;
+                throw this->get_error_object(
+                    "Opening and closing parentheses of element content model "
+                    "must be in the same parameter entity text");
+            }
+            if (first) {
+                throw this->get_error_object("Empty mixed content model");
+            }
+            if (!separator_next) {
+                throw this->get_error_object("Mixed content model cannot end on separator");
             }
             operator++();
-            if (!separator_next) {
-                // Disallow empty MCM without even #PCDATA, or one ending in separator.
-                throw;
-            }
             if (this->get(parameter_entities) != ASTERISK) {
                 if (!mcm.choices.empty()) {
                     // MCM MUST end in )* if not empty.
-                    throw;
+                    throw this->get_error_object("Expected '*'");
                 }
             } else {
                 operator++();
@@ -1412,25 +1452,25 @@ MixedContentModel Parser::parse_mixed_content_model(
         } else if (c == VERTICAL_BAR) {
             operator++();
             if (!separator_next) {
-                throw;
+                throw this->get_error_object("Unexpected separator");
             }
             separator_next = false;
         } else {
             if (separator_next) {
-                throw;
+                throw this->get_error_object("Expected separator");
             }
             String name = this->parse_name(
                 MIXED_CONTENT_NAME_TERMINATORS, true, &parameter_entities);
             if (first) {
                 // Must be PCDATA to begin with (excluding octothorpe).
                 if (name != PCDATA) {
-                    throw;
+                    throw this->get_error_object("Expected 'PCDATA'");
                 }
                 first = false;
             } else {
                 // Duplicate element names are prohibited.
                 if (mcm.choices.count(name)) {
-                    throw;
+                    throw this->get_error_object("Duplicate element name");
                 }
                 mcm.choices.insert(name);
             }
@@ -1481,7 +1521,12 @@ void Parser::parse_attribute_declaration(DoctypeDeclaration& dtd, AttributeListD
         operator++();
         String presence = this->parse_name(
             WHITESPACE_AND_RIGHT_ANGLE_BRACKET, true, &dtd.parameter_entities);
-        ad.presence = get_attribute_presence(presence);
+        try {
+            ad.presence = get_attribute_presence(presence);
+        } catch (const std::out_of_range&) {
+            throw this->get_error_object(
+                "Attribute presence must be 'REQUIRED', 'IMPLIED', 'FIXED' or none");
+        }
     }
     // Only #FIXED or no presence indication permits a default value.
     if (ad.presence == AttributePresence::fixed || ad.presence == AttributePresence::relaxed) {
@@ -1490,17 +1535,18 @@ void Parser::parse_attribute_declaration(DoctypeDeclaration& dtd, AttributeListD
         ad.default_value = this->parse_attribute_value(dtd, true, false);
     }
     // If the same attribute name is declared multiple times, only the first one counts.
-    // Ignore repeat declaration.
+    // Ignore repeat declaration. NOT AN ERROR.
     if (attlist.count(ad.name)) {
         return;
     }
     // Special attributes validation.
-    if (ad.name == XML_SPACE) {
-        if (
-            ad.type != AttributeType::enumeration || !XML_SPACE_ENUMS.count(ad.enumeration)
-        ) {
-            throw;
-        }
+    if (
+        ad.name == XML_SPACE
+        && (ad.type != AttributeType::enumeration || !XML_SPACE_ENUMS.count(ad.enumeration))
+    ) {
+        throw this->get_error_object(
+            "xml:space special attribute must be an enumeration "
+            "with one or both of 'default' or 'preserve' as options");
     }
     ad.from_external = this->external_dtd_content_active;
     // Register for now, validate later.
@@ -1519,21 +1565,28 @@ std::set<String> Parser::parse_enumerated_attribute(
             continue;
         }
         if (c == RIGHT_PARENTHESIS) {
+            // An enumerated attribute list must not be empty.
+            if (values.empty()) {
+                if (att_type == AttributeType::notation) {
+                    throw this->get_error_object("Notations must not be empty");
+                }
+                throw this->get_error_object("Enumeration must not be empty");
+            }
             if (!separator_next) {
                 // Cannot end on separator.
-                throw;
+                throw this->get_error_object("Cannot end on separator");
             }
             operator++();
             break;
         } else if (c == VERTICAL_BAR) {
             if (!separator_next) {
-                throw;
+                throw this->get_error_object("Unexpected separator");
             }
             operator++();
             separator_next = false;
         } else {
             if (separator_next) {
-                throw;
+                throw this->get_error_object("Expected separator");
             }
             separator_next = true;
             // Notation -> Name, Enumeration -> NmToken
@@ -1546,14 +1599,13 @@ std::set<String> Parser::parse_enumerated_attribute(
             }
             if (values.count(value)) {
                 // Duplicate enumeration list values prohibited.
-                throw;
+                if (att_type == AttributeType::notation) {
+                    throw this->get_error_object("Duplicate notation name");
+                }
+                throw this->get_error_object("Duplicate enumeration option");
             }
             values.insert(value);
         }
-    }
-    // An enumerated attribute list must not be empty.
-    if (values.empty()) {
-        throw;
     }
     return values;
 }
@@ -1578,7 +1630,7 @@ void Parser::parse_entity_declaration(DoctypeDeclaration& dtd) {
     }
     this->ignore_whitespace(dtd.parameter_entities);
     if (this->get(dtd.parameter_entities) != RIGHT_ANGLE_BRACKET) {
-        throw;
+        throw this->get_error_object("Expected '>");
     }
     operator++();
 }
@@ -1599,7 +1651,7 @@ void Parser::parse_general_entity_declaration(DoctypeDeclaration& dtd) {
         if (this->get(dtd.parameter_entities) != RIGHT_ANGLE_BRACKET) {
             // Not done - must be NDATA indication otherwise invalid.
             if (this->parse_name(WHITESPACE, true, &dtd.parameter_entities) != String("NDATA")) {
-                throw;
+                throw this->get_error_object("Expected 'NDATA'");
             }
             this->ignore_whitespace(dtd.parameter_entities);
             ge.is_unparsed = true;
@@ -1609,15 +1661,21 @@ void Parser::parse_general_entity_declaration(DoctypeDeclaration& dtd) {
     }
     if (BUILT_IN_GENERAL_ENTITIES.count(ge.name)) {
         // If built-in entities are declared explictly, must match their actual value.
-        String expected = expand_character_entities(BUILT_IN_GENERAL_ENTITIES.at(ge.name).value);
-        String expansion = expand_character_entities(ge.value);
+        String expected, expansion;
+        try {
+            expected = expand_character_entities(BUILT_IN_GENERAL_ENTITIES.at(ge.name).value);
+            expansion = expand_character_entities(ge.value);
+        } catch (const XmlError& e) {
+            throw this->get_error_object(e.what());
+        }
         if (BUILT_IN_GENERAL_ENTITIES_MANDATORY_DOUBLE_ESCAPE.count(ge.name)) {
             if (ge.value == expected || expansion != expected) {
-                throw;
+                throw this->get_error_object(
+                    "Entity value does not match built-in value (double-escape mandatory)");
             }
         } else {
             if (ge.value != expected && expansion != expected) {
-                throw;
+                throw this->get_error_object("Entity value does not match built-in value");
             }
         }
     }
@@ -1654,7 +1712,7 @@ void Parser::parse_notation_declaration(DoctypeDeclaration& dtd) {
     nd.name = this->parse_name(WHITESPACE, true, &dtd.parameter_entities);
     if (dtd.notation_declarations.count(nd.name)) {
         // Cannot have duplicate notation names.
-        throw;
+        throw this->get_error_object("Duplicate notation name");
     }
     this->ignore_whitespace(dtd.parameter_entities);
     String type = this->parse_name(WHITESPACE, true, &dtd.parameter_entities);
@@ -1675,18 +1733,18 @@ void Parser::parse_notation_declaration(DoctypeDeclaration& dtd) {
         if (nd.has_system_id) {
             if (!whitespace_seen) {
                 // At least 1 whitespace between public/system ID.
-                throw;
+                throw this->get_error_object("Expected whitespace");
             }
             // System ID is optional but does appear to exist here.
             nd.system_id = this->parse_system_id();
         }
     } else {
         // Not SYSTEM or PUBLIC -> invalid.
-        throw;
+        throw this->get_error_object("Expected 'SYSTEM' or 'PUBLIC'");
     }
     this->ignore_whitespace(dtd.parameter_entities);
     if (this->get(dtd.parameter_entities) != RIGHT_ANGLE_BRACKET) {
-        throw;
+        throw this->get_error_object("Expected '>'");
     }
     operator++();
     dtd.notation_declarations[nd.name] = nd;
@@ -1714,7 +1772,7 @@ DoctypeDeclaration Parser::parse_doctype_declaration() {
         } else {
             // External ID or invalid.
             if (!can_parse_external_id) {
-                throw;
+                throw this->get_error_object("Unexpected character");
             }
             can_parse_external_id = false;
             dtd.external_id = this->parse_external_id();
@@ -1772,7 +1830,7 @@ Document Parser::parse_document(bool validate_elements, bool validate_attributes
                     // Hints a comment - need to check further: <!--.
                     operator++();
                     if (this->get() != '-') {
-                        throw;
+                        throw this->get_error_object("Unexpected character");
                     }
                     operator++();
                     this->parse_comment();
@@ -1781,13 +1839,15 @@ Document Parser::parse_document(bool validate_elements, bool validate_attributes
                     String required_string = "DOCTYPE";
                     for (Char required : required_string) {
                         if (this->get() != required) {
-                            throw;
+                            throw this->get_error_object("Unexpected character");
                         }
                         operator++();
                     }
-                    if (doctype_declaration_seen || root_seen) {
-                        // Only one DOCTYPE declaration permitted, before root.
-                        throw;
+                    if (doctype_declaration_seen) {
+                        throw this->get_error_object("Only one DOCTYPE declaration allowed");
+                    }
+                    if (root_seen) {
+                        throw this->get_error_object("DOCTYPE declaration must precede root element");
                     }
                     doctype_declaration_seen = true;
                     document.doctype_declaration.exists = true;
@@ -1798,8 +1858,7 @@ Document Parser::parse_document(bool validate_elements, bool validate_attributes
             default:
                 // Must be the root element - cannot be anything else.
                 if (root_seen) {
-                    // Only 1 root element permitted.
-                    throw;
+                    throw this->get_error_object("Only one root element allowed");
                 }
                 root_seen = true;
                 document.root = this->parse_element(document.doctype_declaration, false);
@@ -1808,7 +1867,7 @@ Document Parser::parse_document(bool validate_elements, bool validate_attributes
     }
     if (!root_seen) {
         // No root element seen - invalid doc.
-        throw;
+        throw this->get_error_object("Expected a root element");
     }
     // Only validate document if DTD given - otherwise be lenient.
     if (document.doctype_declaration.exists) {
@@ -1825,18 +1884,13 @@ XmlError Parser::get_error_object(const std::string& message) {
         line_number = this->line_number;
         line_pos = this->line_pos;
     } else {
-        const Resource& resource = resource_paths.top();
-        error_message += "Error in file " + resource.path.string() + " at around line ";
-        if (resource.is_parameter) {
-            line_number = this->parameter_entity_stack.top().parser->line_number;
-            line_pos = this->parameter_entity_stack.top().parser->line_pos;
-        } else {
-            line_number = this->general_entity_stack.top().parser->line_number;
-            line_pos = this->general_entity_stack.top().parser->line_pos;
-        }
+        const std::filesystem::path& resource = this->resource_paths.top();
+        error_message += "Error in file " + resource.string() + " at around line ";
+        line_number = this->resource_to_stream.at(resource)->parser->line_number;
+        line_pos = this->resource_to_stream.at(resource)->parser->line_pos;
     }
-    error_message += std::to_string(this->line_number) + ", char ";
-    error_message += std::to_string(this->line_pos + 1) + ": ";
+    error_message += std::to_string(line_number) + ", char ";
+    error_message += std::to_string(line_pos + 1) + ": ";
     error_message += message;
     return XmlError(error_message);
 }

@@ -231,7 +231,7 @@ int main() {
                 NDATA gif >
     ]><root></root>
     )", [](const Document& document) {
-        auto general_entities  = document.doctype_declaration.general_entities;
+        auto general_entities = document.doctype_declaration.general_entities;
         assert((general_entities.size() == 5 + BUILT_IN_GENERAL_ENTITIES.size()));
         assert((!general_entities.at("g1").is_external));
         assert((!general_entities.at("g1").is_unparsed));
