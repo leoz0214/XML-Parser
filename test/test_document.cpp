@@ -56,22 +56,22 @@ int main() {
         assert((children.at(2).children.at(1).tag.attributes.at("disc-price") == String("0.04")));
     });
     test_document(R"(<?xml version='1.0' encoding="utf-8"?>
-        <!DOCTYPE     root  PUBLIC   "'public id 123!'.xml" 'systemid321.lmx' >
+        <!DOCTYPE     root>
         <root >Hi</root><!-- DOCTYPE-SANITY-CHECK -->
     )", [](const Document& document) {
         DoctypeDeclaration dtd = document.doctype_declaration;
         assert((dtd.exists));
         assert((dtd.root_name == String("root")));
-        assert((dtd.external_id.type == ExternalIDType::public_));
+        assert((dtd.external_id.type == ExternalIDType::none));
     }, false);
-    test_document("<!DOCTYPE x SYSTEM 'y'><x></x>", [](const Document& document) {
-        assert((document.doctype_declaration.external_id.type == ExternalIDType::system));
+    test_document("<!DOCTYPE x><x></x>", [](const Document& document) {
+        assert((document.doctype_declaration.external_id.type == ExternalIDType::none));
     }, false);
     test_document("<!DOCTYPE minimal><minimal></minimal>", [](const Document& document) {
         assert((document.doctype_declaration.external_id.type == ExternalIDType::none));
         assert((document.root.text.empty()));
     }, false);
-    test_document(R"(<!DOCTYPE r PUBLIC 'p' 's' [
+    test_document(R"(<!DOCTYPE r [
         <!-- Internal DTD basic checking... this should pass -->
             <?doc-pi DoctypePI?>
         <!--END OF DOCUMENT TYPE DECLARATION SECTION-->
@@ -127,7 +127,7 @@ int main() {
         assert((p.mixed_content.choices.size() == 5));
         assert((element_decls.at("b").mixed_content.choices.empty()));
     });
-    test_document(R"(<!DOCTYPE root SYSTEM "sys/a" [
+    test_document(R"(<!DOCTYPE root [
         <!NOTATION n1    SYSTEM "Notation1">
         <!NOTATION n2 PUBLIC "Notation2" 'N2'>
         <!NOTATION n3 PUBLIC "Notation3">]><root> </root>

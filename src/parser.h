@@ -53,17 +53,18 @@ class Parser {
     std::stack<EntityStream> general_entity_stack;
     std::stack<EntityStream> parameter_entity_stack;
     // Track file paths. Assume main doc in CWD.
-    std::stack<std::filesystem::path> file_paths;
+    std::stack<Resource> resource_paths;
     // Track seen entity names to detect self references (avoid infinite recursion).
     std::set<String> general_entity_names;
     std::set<String> parameter_entity_names;
     bool general_entity_active = false;
-    std::size_t parameter_entity_pos = 0;
     bool just_parsed_character_reference = false;
     bool parameter_entity_active = false;
     bool just_parsed_carriage_return = false;
     bool external_dtd_content_active = false;
     bool standalone = false;
+    std::size_t line_number = 1;
+    std::size_t line_pos = 0;
 
     String parse_name(
         const String&, bool validate = true, const ParameterEntities* parameter_entities = nullptr,
@@ -72,12 +73,13 @@ class Parser {
     String parse_attribute_value(
         const DoctypeDeclaration&, bool references_active = true, bool is_cdata = true);
     String parse_entity_value(const DoctypeDeclaration&);
-    Char parse_character_entity();
+    Char parse_character_reference();
     String parse_general_entity_name(const GeneralEntities&);
     String parse_general_entity_text(
         const GeneralEntities&, std::function<void(Char)> func,
         int original_depth = 0, bool in_attribute_value = false);
     void parse_general_entity(const GeneralEntities&, bool in_attribute_value);
+    std::filesystem::path get_folder_path();
     std::filesystem::path get_file_path();
     void end_general_entity();
     void parse_parameter_entity(const ParameterEntities&, bool);
@@ -122,8 +124,9 @@ class Parser {
     bool general_entity_eof();
     bool parameter_entity_eof();
     void ignore_whitespace();
-    void ignore_whitespace(const ParameterEntities& parameter_entities);
+    void ignore_whitespace(const ParameterEntities&);
     Element parse_element(const DoctypeDeclaration&, bool = false);
+    XmlError get_error_object(const std::string&);
     public:
         Element parse_element();
         Document parse_document(bool validate_elements = false, bool validate_attribute = false);

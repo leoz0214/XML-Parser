@@ -101,6 +101,11 @@ GeneralEntity::GeneralEntity(const String& value) {
     this->value = value;
 }
 
+Resource::Resource(const std::filesystem::path& path, bool is_parameter) {
+    this->path = path;
+    this->is_parameter = is_parameter;
+}
+
 bool is_whitespace(Char c) {
     return std::find(WHITESPACE.cbegin(), WHITESPACE.cend(), c) != WHITESPACE.cend();
 }
@@ -235,7 +240,7 @@ AttributePresence get_attribute_presence(const String& string) {
     return ATTRIBUTE_PRESENCES.at(string);
 }
 
-Char parse_character_entity(const String& string) {
+Char parse_character_reference(const String& string) {
     Char c = string.front();
     std::size_t i = 0;
     bool is_hex = c == 'x';
@@ -289,7 +294,7 @@ String expand_character_entities(const String& string) {
                     break;
                 }
             }
-            result.push_back(parse_character_entity(char_entity));
+            result.push_back(parse_character_reference(char_entity));
         } else {
             result.push_back(c);
         }

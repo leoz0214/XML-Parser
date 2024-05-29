@@ -2,4 +2,5 @@
 <!ENTITY % pe2 "PUBLIC">
 <!ENTITY % pe3 "SYSTEM">
 <!NOTATION%pe1;%pe2;"Notation">
+<!-- Note that parameter entity will not expand in system ID literal. -->
 <!NOTATION Example%pe3;"%pe2;">

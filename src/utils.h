@@ -7,6 +7,7 @@
 #include <map>
 #include <istream>
 #include <set>
+#include <stdexcept>
 #include <streambuf>
 #include <string>
 #include <utility>
@@ -36,6 +37,17 @@ Char parse_utf8(std::istream&);
 class StringBuffer : public std::streambuf {
     public:
         StringBuffer(const std::string&);
+};
+
+// Error class for all errors that occur during parsing/validation.
+class XmlError : public std::runtime_error {
+    using std::runtime_error::runtime_error;
+};
+// Used in the file path stack.
+struct Resource {
+    std::filesystem::path path;
+    bool is_parameter = false;
+    Resource(const std::filesystem::path&, bool);
 };
 
 // Character constants.
@@ -309,7 +321,7 @@ struct Entity {
     bool from_external = false;
 };
 
-Char parse_character_entity(const String&);
+Char parse_character_reference(const String&);
 String expand_character_entities(const String&);
 
 struct GeneralEntity : public Entity {

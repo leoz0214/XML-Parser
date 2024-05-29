@@ -15,6 +15,9 @@ EntityStream::EntityStream(const String& text, const String& name) {
 EntityStream::EntityStream(const std::filesystem::path& file_path, const String& name) {
     this->file_path = file_path;
     std::ifstream* stream_ptr = new std::ifstream(this->file_path);
+    if (!stream_ptr->is_open()) {
+        throw XmlError("Could not open file: " + file_path.string());
+    }
     this->stream = unique_istream_ptr(stream_ptr);
     this->name = name;
     Parser* parser_ptr = new Parser(*this->stream);
@@ -38,11 +41,19 @@ EntityStream::EntityStream(const std::filesystem::path& file_path, const String&
         this->stream->seekg(std::ios::beg);
         this->parser->previous_char = -1;
         this->parser->just_parsed_carriage_return = false;
+        this->parser->line_number = 1;
+        this->parser->line_pos = 0;
         this->leading_parameter_space_done = false;
         this->trailing_parameter_space_done = false;
         return;
     }
-    this->parse_text_declaration();
+    try {
+        this->parse_text_declaration();
+    } catch (const XmlError& e) {
+        std::string error_message = "Text declaration error in ";
+        error_message += this->file_path.string() + ": " + e.what();
+        throw XmlError(error_message);
+    }
 }
 
 Char EntityStream::get() {
@@ -101,7 +112,7 @@ void EntityStream::parse_text_declaration() {
         if (c == QUESTION_MARK) {
             operator++();
             if (this->get() != TAG_CLOSE) {
-                throw;
+                throw XmlError("Expected '>'");
             }
             operator++();
             break;
@@ -110,33 +121,33 @@ void EntityStream::parse_text_declaration() {
         std::pair attribute = this->parser->parse_attribute(dummy, false);
         if (attribute.first == XML_DECLARATION_VERSION_NAME) {
             if (version_parsed || encoding_parsed) {
-                throw;
+                throw XmlError("Cannot specify version here");
             }
             if (!valid_version(attribute.second)) {
-                throw;
+                throw XmlError("Invalid version");
             }
             this->version = attribute.second;
             version_parsed = true;
         } else if (attribute.first == XML_DECLARATION_ENCODING_NAME) {
             if (encoding_parsed) {
-                throw;
+                throw XmlError("Cannot re-specify encoding here");
             }
             String& encoding = attribute.second;
             std::transform(encoding.begin(), encoding.end(), encoding.begin(), [](Char c) {
                 return std::tolower(c);
             });
             if (!valid_encoding(encoding)) {
-                throw;
+                throw XmlError("Invalid encoding");
             }
             this->version = encoding;
             encoding_parsed = true;
         } else {
-            throw;
+            throw XmlError("Unknown text declaration specifier");
         }
     }
     if (!encoding_parsed) {
         // Encoding is mandatory in external text declaration.
-        throw;
+        throw XmlError("Encoding not specified");
     }
 }
 
@@ -164,7 +175,7 @@ Char Parser::get() {
         return this->parameter_entity_stack.top().get();
     }
     if (this->eof()) {
-        throw;
+        throw XmlError("End of data reached unexpectedly");
     }
     Char c;
     if (std::holds_alternative<unique_istream_ptr>(this->stream)) {
@@ -190,7 +201,7 @@ Char Parser::get(const GeneralEntities& general_entities, bool in_attribute_valu
         operator++();
         if (this->get() == OCTOTHORPE) {
             operator++();
-            return this->parse_character_entity();
+            return this->parse_character_reference();
         }
         this->parse_general_entity(general_entities, in_attribute_value);
         if (this->general_entity_stack.top().eof()) {
@@ -200,7 +211,7 @@ Char Parser::get(const GeneralEntities& general_entities, bool in_attribute_valu
             } else {
                 this->general_entity_names.erase(this->general_entity_stack.top().name);
                 if (this->general_entity_stack.top().is_external) {
-                    this->file_paths.pop();
+                    this->resource_paths.pop();
                 }
                 this->general_entity_stack.pop();
             }
@@ -224,7 +235,8 @@ Char Parser::get(
         }
         if (in_markup && !this->external_dtd_content_active) {
             // Can only have PEs inside markup when parsing external DTD or parameter entity.
-            throw;
+            throw this->get_error_object(
+                "Parameter entity disallowed inside markup in internal DTD.");
         }
         this->parse_parameter_entity(parameter_entities, in_entity_value);
         c = this->parameter_entity_stack.top().get();
@@ -243,7 +255,7 @@ void Parser::operator++() {
         if (this->general_entity_stack.top().eof() && this->general_entity_stack.size() > 1) {
             this->general_entity_names.erase(this->general_entity_stack.top().name);
             if (this->general_entity_stack.top().is_external) {
-                this->file_paths.pop();
+                this->resource_paths.pop();
             }
             this->general_entity_stack.pop();
         }
@@ -254,11 +266,17 @@ void Parser::operator++() {
         if (this->parameter_entity_stack.top().eof() && this->parameter_entity_stack.size() > 1) {
             this->parameter_entity_names.erase(this->parameter_entity_stack.top().name);
             if (this->parameter_entity_stack.top().is_external) {
-                this->file_paths.pop();
+                this->resource_paths.pop();
             }
             this->parameter_entity_stack.pop();
         }
         return;
+    }
+    if (this->previous_char == LINE_FEED) {
+        this->line_number++;
+        this->line_pos = 0;
+    } else {
+        this->line_pos++;
     }
     if (this->previous_char == -1) {
         this->get();
@@ -306,10 +324,10 @@ String Parser::parse_name(
             break;
         }
         if (name.empty() && !valid_name_start_character(c)) {
-            throw;
+            throw this->get_error_object("Invalid name start character");
         }
         if (!name.empty() && !valid_name_character(c)) {
-            throw;
+            throw this->get_error_object("Invalid name character");
         }
         name.push_back(c);
         operator++();
@@ -318,7 +336,7 @@ String Parser::parse_name(
         validate && !valid_name(name) &&
         (validation_exemptions == nullptr || !validation_exemptions->count(name))
     ) {
-        throw;
+        throw this->get_error_object("Invalid name");
     }
     return name;
 }
@@ -340,7 +358,7 @@ String Parser::parse_attribute_value(const DoctypeDeclaration& dtd, bool referen
     // Ensure opening quote (double or single accepted).
     Char quote = this->get();
     if (quote != SINGLE_QUOTE && quote != DOUBLE_QUOTE) {
-        throw;
+        throw this->get_error_object("Attribute value must start with a quote");
     }
     operator++();
     String value;
@@ -349,17 +367,14 @@ String Parser::parse_attribute_value(const DoctypeDeclaration& dtd, bool referen
         Char c = this->get(dtd.general_entities, true);
         if (this->general_entity_stack.size() > general_entity_stack_size_before) {
             if (!references_active) {
-                throw;
-            }
-            if (this->general_entity_stack.top().is_external) {
-                // No external general entities in attribute values.
-                throw;
+                this->general_entity_stack.pop();
+                throw this->get_error_object("Cannot have entity reference here");
             }
             // Parse all general entity text and normalise whitespace.
             this->parse_general_entity_text(dtd.general_entities, [&value, this](Char c) {
                 // Included in literal - ignore quotes but disallow < still for example.
                 if (!this->just_parsed_character_reference && !valid_attribute_value_character(c)) {
-                    throw;
+                    throw this->get_error_object("Invalid attribute character in entity");
                 }
                 if (is_whitespace(c) && !this->just_parsed_character_reference) {
                     value.push_back(SPACE);
@@ -375,10 +390,10 @@ String Parser::parse_attribute_value(const DoctypeDeclaration& dtd, bool referen
                 break;
             }
             if (!valid_attribute_value_character(c)) {
-                throw;
+                throw this->get_error_object("Invalid attribute character");
             }
         } else if (!references_active) {
-            throw;
+            throw this->get_error_object("Cannot have character reference here");;
         }
         if (is_whitespace(c) && !this->just_parsed_character_reference) {
             // All literal whitespace that is not char reference becomes space.
@@ -411,7 +426,7 @@ String Parser::parse_attribute_value(const DoctypeDeclaration& dtd, bool referen
 String Parser::parse_entity_value(const DoctypeDeclaration& dtd) {
     Char quote = this->get(dtd.parameter_entities);
     if (quote != SINGLE_QUOTE && quote != DOUBLE_QUOTE) {
-        throw;
+        throw this->get_error_object("Entity value must start with a quote");
     }
     operator++();
     String value;
@@ -427,7 +442,7 @@ String Parser::parse_entity_value(const DoctypeDeclaration& dtd) {
             if (this->get(dtd.parameter_entities) == OCTOTHORPE) {
                 // Character entity: &#...
                 operator++();
-                value.push_back(this->parse_character_entity());
+                value.push_back(this->parse_character_reference());
             } else {
                 // General entity (bypass - store actual entity ref
                 // in the value of current entity - not replacement text).
@@ -435,7 +450,8 @@ String Parser::parse_entity_value(const DoctypeDeclaration& dtd) {
                 String name = this->parse_general_entity_name(dtd.general_entities);
                 if (dtd.general_entities.count(name) && dtd.general_entities.at(name).is_unparsed) {
                     // Cannot have ref to unparsed entity here.
-                    throw;
+                    throw this->get_error_object(
+                        "Cannot have refernce to unparsed entity in entity value");
                 }
                 value.insert(value.end(), name.begin(), name.end());
                 value.push_back(SEMI_COLON);
@@ -450,7 +466,7 @@ String Parser::parse_entity_value(const DoctypeDeclaration& dtd) {
     return value;
 }
 
-Char Parser::parse_character_entity() {
+Char Parser::parse_character_reference() {
     String string;
     while (true) {
         Char c = this->get();
@@ -460,11 +476,11 @@ Char Parser::parse_character_entity() {
             break;
         }
         if (c == SPACE) {
-            throw;
+            throw this->get_error_object("Character reference not terminated");
         }
     }
     this->just_parsed_character_reference = true;
-    return xml::parse_character_entity(string);
+    return xml::parse_character_reference(string);
 }
 
 String Parser::parse_general_entity_name(const GeneralEntities& general_entities) {
@@ -476,7 +492,7 @@ String Parser::parse_general_entity_name(const GeneralEntities& general_entities
             break;
         }
         if (c == SPACE) {
-            throw;
+            throw this->get_error_object("Entity reference not terminated");
         }
         name.push_back(c);
     }
@@ -486,30 +502,30 @@ String Parser::parse_general_entity_name(const GeneralEntities& general_entities
 void Parser::parse_general_entity(const GeneralEntities& general_entities, bool in_attribute_value) {
     String name = this->parse_general_entity_name(general_entities);
     if (!general_entities.count(name)) {
-        throw;
+        throw this->get_error_object("Reference to undeclared entity");
     }
     if (general_entities.at(name).is_unparsed) {
-        throw;
+        throw this->get_error_object("Cannot have reference to unparsed entity");
     }
     if (
         !BUILT_IN_GENERAL_ENTITIES.count(name)
         && general_entities.at(name).from_external && this->standalone
     ) {
         // Entities DECLARED INSIDE external files prohibited if standalone.
-        throw;
+        throw this->get_error_object("Cannot declare entities externally if standalone");
     }
     if (general_entity_names.count(name)) {
         // Recursive self-reference - illegal.
-        throw;
+        throw this->get_error_object("Entity recursive self-reference detected");
     }
     general_entity_names.insert(name);
     if (general_entities.at(name).is_external) {
         if (in_attribute_value) {
             // Attribute values must not contain entity references to external entities.
-            throw;
+            throw this->get_error_object("No external entities in attribute values");
         }
         this->general_entity_stack.push({general_entities.at(name).external_id.system_id, name});
-        this->file_paths.push(this->general_entity_stack.top().file_path);
+        this->resource_paths.push({this->general_entity_stack.top().file_path, false});
     } else {
         this->general_entity_stack.push({general_entities.at(name).value, name});
     }
@@ -546,7 +562,7 @@ String Parser::parse_general_entity_text(
 
 void Parser::end_general_entity() {
     if (this->general_entity_stack.top().is_external) {
-        this->file_paths.pop();
+        this->resource_paths.pop();
     }
     this->general_entity_stack = {};
     this->general_entity_names = {};
@@ -561,18 +577,18 @@ void Parser::parse_parameter_entity(const ParameterEntities& parameter_entities,
         if (c == SEMI_COLON) {
             break;
         }
-        if (this->parameter_entity_eof()) {
-            throw;
+        if (c == SPACE) {
+            throw this->get_error_object("Parameter entity reference not terminated");
         }
         name.push_back(c);
     }
     if (!parameter_entities.count(name)) {
         // Parameter entity name is not declared.
-        throw;
+        throw this->get_error_object("Reference to undeclared parameter entity");
     }
     if (parameter_entity_names.count(name)) {
         // Recursive self-reference - illegal.
-        throw;
+        throw this->get_error_object("Parameter entity recursive self-reference detected");
     }
     parameter_entity_names.insert(name);
     EntityStream parameter_entity = parameter_entities.at(name).is_external
@@ -584,22 +600,23 @@ void Parser::parse_parameter_entity(const ParameterEntities& parameter_entities,
         this->external_dtd_content_active = parameter_entity.is_external;
     }
     if (parameter_entity.is_external) {
-        this->file_paths.push(parameter_entity.file_path);
+        this->resource_paths.push({parameter_entity.file_path, true});
     }
     this->parameter_entity_stack.push(std::move(parameter_entity));
     this->parameter_entity_active = true;
 }
 
+std::filesystem::path Parser::get_folder_path() {
+    return this->resource_paths.empty() ? std::filesystem::path() : this->get_file_path().parent_path();
+}
+
 std::filesystem::path Parser::get_file_path() {
-    if (this->file_paths.empty()) {
-        return std::filesystem::path();
-    }
-    return this->file_paths.top().parent_path();
+    return this->resource_paths.empty() ? std::filesystem::path() : this->resource_paths.top().path;
 }
 
 void Parser::end_parameter_entity() {
     if (this->parameter_entity_stack.top().is_external) {
-        this->file_paths.pop();
+        this->resource_paths.pop();
     }
     this->parameter_entity_stack = {};
     this->parameter_entity_names = {};
@@ -1004,7 +1021,7 @@ std::filesystem::path Parser::parse_public_id() {
     }
     std::filesystem::path result = std::string(public_id);
     if (result.is_relative() && !is_url_resource(result.string())) {
-        result = (this->get_file_path() / result).lexically_normal();
+        result = (this->get_folder_path() / result).lexically_normal();
     }
     return result;
 }
@@ -1029,7 +1046,7 @@ std::filesystem::path Parser::parse_system_id() {
     }
     std::filesystem::path result = std::string(system_id);
     if (result.is_relative() && !is_url_resource(result.string())) {
-        result = (this->get_file_path() / result).lexically_normal();
+        result = (this->get_folder_path() / result).lexically_normal();
     }
     return result;
 }
@@ -1152,7 +1169,7 @@ void Parser::start_external_subset(const std::filesystem::path& system_id) {
     parameter_entity.is_parameter = true;
     parameter_entity.in_entity_value = false;
     this->external_dtd_content_active = true;
-    this->file_paths.push(parameter_entity.file_path);
+    this->resource_paths.push({parameter_entity.file_path, true});
     this->parameter_entity_stack.push(std::move(parameter_entity));
     this->parameter_entity_active = true;
 }
@@ -1729,7 +1746,7 @@ Document Parser::parse_document(bool validate_elements, bool validate_attributes
         // Surprisingly, only '<' valid other than whitespace in starting
         // something new. If not, then throw. If so, deduce what is coming up.
         if (c != LEFT_ANGLE_BRACKET) {
-            throw;
+            throw this->get_error_object("Expecting '<'");
         }
         operator++();
         switch (this->get()) {
@@ -1798,6 +1815,30 @@ Document Parser::parse_document(bool validate_elements, bool validate_attributes
         validate_document(document, validate_elements, validate_attributes);
     }
     return document;
+}
+
+XmlError Parser::get_error_object(const std::string& message) {
+    std::string error_message = "";
+    std::size_t line_number, line_pos;
+    if (this->resource_paths.empty()) {
+        error_message += "Error in document at around line ";
+        line_number = this->line_number;
+        line_pos = this->line_pos;
+    } else {
+        const Resource& resource = resource_paths.top();
+        error_message += "Error in file " + resource.path.string() + " at around line ";
+        if (resource.is_parameter) {
+            line_number = this->parameter_entity_stack.top().parser->line_number;
+            line_pos = this->parameter_entity_stack.top().parser->line_pos;
+        } else {
+            line_number = this->general_entity_stack.top().parser->line_number;
+            line_pos = this->general_entity_stack.top().parser->line_pos;
+        }
+    }
+    error_message += std::to_string(this->line_number) + ", char ";
+    error_message += std::to_string(this->line_pos + 1) + ": ";
+    error_message += message;
+    return XmlError(error_message);
 }
 
 }
