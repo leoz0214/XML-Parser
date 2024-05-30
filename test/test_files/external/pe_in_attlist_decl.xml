@@ -1,6 +1,6 @@
 <!ENTITY % pe1 "my-element">
 <!ENTITY % pe2 "title CDATA #REQUIRED">
-<!ENTITY % pe3 "ID  #IMPLIED">
+<!ENTITY % pe3 "ID #IMPLIED">
 <!ENTITY % pe4 'atts NMTOKENS "abc def'>
 <!ENTITY % pe5 "level (1|2|3) #FIXED '3'">
 <!ATTLIST%pe1;%pe2;identifier%pe3;  %pe4;ghi" %pe5;>

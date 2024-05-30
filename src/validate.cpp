@@ -11,7 +11,7 @@ void validate_document(
 ) {
     if (document.root.tag.name != document.doctype_declaration.root_name) {
         // Root name must match the root name in the DTD.
-        throw;
+        throw XmlError("Root element name does not match declared root element name in DTD");
     }
     if (validate_elements) {
         // Validate root element and all its children (recursively).
@@ -31,7 +31,7 @@ void validate_element(
 ) {
     if (!element_declarations.count(element.tag.name)) {
         // Element not declared at all.
-        throw;
+        throw XmlError("Undeclared element: " + std::string(element.tag.name));
     }
     ElementDeclaration ed = element_declarations.at(element.tag.name);
     switch (ed.type) {
@@ -41,7 +41,8 @@ void validate_element(
         case ElementType::empty:
             // Element must simply have no content.
             if (!element.is_empty) {
-                throw;
+                throw XmlError(
+                    "Element declared EMPTY but contains content: " + std::string(element.tag.name));
             }
             break;
         case ElementType::children:
@@ -110,15 +111,20 @@ bool valid_element_content_helper(
 void validate_element_content(const Element& element, const ElementContentModel& ecm, bool standalone) {
     if (standalone && !element.text.empty()) {
         // Must not be standalone if white space occurs directly within any instance of those types
-        throw;
+        throw XmlError(
+            "Standalone document cannot have whitespace "
+            "in element with element content: " + std::string(element.tag.name));
     }
     if (!element.children_only) {
-        throw 0.0;
+        throw XmlError(
+            "Element with element content must have "
+            "child elements only: " + std::string(element.tag.name));
     }
     std::size_t pos = 0;
     // Note: must also ensure all elements covered (hence pos must equal child count in the end).
     if (!valid_element_content_helper(element, ecm, pos) || pos < element.children.size()) {
-        throw 0.0;
+        throw XmlError(
+            "Element did not match element content model: " + std::string(element.tag.name));
     }
 }
 
@@ -127,7 +133,7 @@ void validate_mixed_content(const Element& element, const MixedContentModel& mcm
     if (!std::all_of(element.children.begin(), element.children.end(), [&](const Element& child) {
         return mcm.choices.count(child.tag.name);
     })) {
-        throw 0.0;
+        throw XmlError("Element did not match mixed content model: " + std::string(element.tag.name));
     }
 }
 
@@ -142,17 +148,19 @@ void validate_attribute_list_declarations(const DoctypeDeclaration& dtd) {
                 if (
                     ad.presence != AttributePresence::required && ad.presence != AttributePresence::implied
                 ) {
-                    throw;
+                    throw XmlError(
+                        "ID attribute must be #IMPLIED or #REQUIRED: '"
+                        + std::string(ad.name) + "' of element " + std::string(element_name));
                 }
                 // An element type must not have more than one ID attribute specified.
                 if (id_attribute_seen) {
-                    throw;
+                    throw XmlError("Single ID attribute only: " + std::string(element_name));
                 }
                 id_attribute_seen = true;
             } else if (ad.type == AttributeType::notation) {
                 // An element type must not have more than one NOTATION attribute specified.
                 if (notation_attribute_seen) {
-                    throw;
+                    throw XmlError("Single notation attribute only: " + std::string(element_name));
                 }
                 notation_attribute_seen = true;
                 // An attribute of type NOTATION must not be declared on an element declared EMPTY.
@@ -160,17 +168,27 @@ void validate_attribute_list_declarations(const DoctypeDeclaration& dtd) {
                     dtd.element_declarations.count(element_name)
                     && dtd.element_declarations.at(element_name).type == ElementType::empty
                 ) {
-                    throw;
+                    throw XmlError(
+                        "Notation attribute must not be declared "
+                        "on an EMPTY element: " + std::string(element_name));
                 }
                 // All notation names in the declaration must be declared.
                 if (!std::all_of(ad.notations.begin(), ad.notations.end(), [&dtd](const String& notation) {
                     return dtd.notation_declarations.count(notation);
                 })) {
-                    throw;
+                    throw XmlError(
+                        "All notation names must be declared: '"
+                        + std::string(ad.name) + "' of element " + std::string(element_name));
                 }
             }
             if (ad.has_default_value) {
-                validate_default_attribute_value(ad, dtd);
+                try {
+                    validate_default_attribute_value(ad, dtd);
+                } catch (const XmlError& e) {
+                    throw XmlError(
+                        "Default value error for attribute '" + std::string(ad.name) +
+                        "' of element " + std::string(element_name) + ": " + e.what());
+                }
             }
         }
     }
@@ -184,40 +202,39 @@ void validate_default_attribute_value(
         case AttributeType::id:
         case AttributeType::idref:
         case AttributeType::entity:
-            // Default value must match Name.
             if (!valid_name(value, true)) {
-                throw;
+                throw XmlError("Attribute value must match Name");
             }
             break;
         case AttributeType::idrefs:
         case AttributeType::entities:
-            // Default value must match Names.
+            // Attribute value must match Names.
             if (!valid_names(value)) {
-                throw;
+                throw XmlError("Attribute value must match Names");
             }
             break;
         case AttributeType::nmtoken:
-            // Default value must match Nmtoken.
+            // Attribute value must match Nmtoken.
             if (!valid_nmtoken(value)) {
-                throw;
+                throw XmlError("Attribute value must match Nmtoken");
             }
             break;
         case AttributeType::nmtokens:
-            // Default value must match Nmtokens.
+            // Attribute value must match Nmtokens.
             if (!valid_nmtokens(value)) {
-                throw;
+                throw XmlError("Attribute value must match Nmtokens");
             }
             break;
         case AttributeType::notation:
-            // Default value must be one of the notations in the enumeration list.
+            // Attribute value must be one of the notations in the enumeration list.
             if (!ad.notations.count(value)) {
-                throw;
+                throw XmlError("Attribute value must match one of the notation names");
             }
             break;
         case AttributeType::enumeration:
-            // Default value must be one of the enumeration values.
+            // Attribute value must be one of the enumeration values.
             if (!ad.enumeration.count(value)) {
-                throw;
+                throw XmlError("Attribute value must match one of the enumeration values");
             }
             break;
     }
@@ -229,7 +246,8 @@ void validate_attributes(
     if (!dtd.attribute_list_declarations.count(element.tag.name)) {
         // No attlist declaration - element must have no attributes or else error.
         if (!element.tag.attributes.empty()) {
-            throw;
+            throw XmlError(
+                "Element with attribute must have ATTLIST declaration: " + std::string(element.tag.name));
         }
     } else {
         const AttributeListDeclaration& ald = dtd.attribute_list_declarations.at(element.tag.name);
@@ -245,35 +263,46 @@ void validate_attributes(
                     continue;
                 }
                 // Attribute not in element and not implied => REQUIRED failed => invalid.
-                throw;
+                throw XmlError(
+                    "REQUIRED attribute '" + std::string(attribute_name) +
+                    "' not specified in element: " + std::string(element.tag.name));
             }
             registered++;
             const String& value = attributes.at(attribute_name);
             if (ad.presence == AttributePresence::fixed) {
                 // The attribute must always have the default value.
                 if (value != ad.default_value) {
-                    throw;
+                    throw XmlError(
+                        "FIXED attribute '" + std::string(attribute_name) +
+                        "' does not match default value in element: " + std::string(element.tag.name));
                 }
             } else {
                 // Need to check basic validity: based on default value validation.
                 // Only required if not FIXED (Fixed default value already validated).
-                validate_default_attribute_value(ad, dtd, &value);
+                try {
+                    validate_default_attribute_value(ad, dtd, &value);
+                } catch (const XmlError& e) {
+                    throw XmlError(
+                        "Value error for attribute '" + std::string(ad.name) +
+                        "' of element " + std::string(element.tag.name) + ": " + e.what());
+                }
             }
             // Further validation now that this a real attribute value.
+            std::string error_details;
             switch (ad.type) {
                 case AttributeType::idref:
-                    // IDREF values must match the value of some ID attribute in doc.
                     if (!ids.count(value)) {
-                        throw;
+                        error_details = "IDREF value must match an ID value in the document";
                     }
                     break;
                 case AttributeType::idrefs: {
-                    // All IDREEFs must match the value of some ID attribute in doc.
                     String idref;
                     for (Char c : value) {
                         if (c == SPACE) {
                             if (!ids.count(idref)) {
-                                throw;
+                                error_details =
+                                    "All IDREFS values must match an ID value in the document";
+                                goto done;
                             }
                             idref.clear();
                         } else {
@@ -281,14 +310,13 @@ void validate_attributes(
                         }
                     }
                     if (!ids.count(idref)) {
-                        throw;
+                        error_details = "All IDREFS values must match an ID value in the document";
                     }
                     break;
                 }
                 case AttributeType::entity:
-                    // Must match the name of an unparsed entity declared in the DTD.
                     if (!is_unparsed_entity(value)) {
-                        throw;
+                        error_details = "ENTITY value must match the name of a declared unparsed entity";
                     }
                     break;
                 case AttributeType::entities: {
@@ -297,7 +325,10 @@ void validate_attributes(
                     for (Char c : value) {
                         if (c == SPACE) {
                             if (!is_unparsed_entity(unparsed_entity)) {
-                                throw;
+                                error_details =
+                                    "All ENTITIES values must match "
+                                    "the name of a declared unparsed entity";
+                                goto done;
                             }
                             unparsed_entity.clear();
                         } else {
@@ -305,15 +336,22 @@ void validate_attributes(
                         }
                     }
                     if (!is_unparsed_entity(unparsed_entity)) {
-                        throw;
+                        error_details =
+                            "All ENTITIES values must match the name of a declared unparsed entity";
                     }
                     break;
                 }
             }
+            done:
+            if (!error_details.empty()) {
+                throw XmlError(
+                    "Value error for attribute '" + std::string(ad.name) +
+                    "' of element " + std::string(element.tag.name) + ": " + error_details);
+            }
         }
-        if (registered < ald.size()) {
+        if (registered < attributes.size()) {
             // Excess attributes that are not declared. Invalid.
-            throw;
+            throw XmlError("Undeclared attributes found in element: " + std::string(element.tag.name));
         }
     }
     for (const Element& child : element.children) {
@@ -329,7 +367,7 @@ void parse_and_validate_ids(const Element& element, const DoctypeDeclaration& dt
                     const String& id = element.tag.attributes.at(attribute_name);
                     if (ids.count(id)) {
                         // Repeated ID values in document forbidden.
-                        throw;
+                        throw XmlError("Repeated ID value: '" + std::string(id) + "'");
                     }
                     ids.insert(id);
                 }

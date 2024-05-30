@@ -38,7 +38,7 @@ EntityStream::EntityStream(const std::filesystem::path& file_path, const String&
     }
     if (!has_text_declaration) {
         // Reset stream to start.
-        this->stream->seekg(std::ios::beg);
+        this->stream->seekg(0, std::ios::beg);
         this->parser->previous_char = -1;
         this->parser->just_parsed_carriage_return = false;
         this->parser->line_number = 1;
@@ -73,7 +73,11 @@ Char EntityStream::get() {
             return SPACE;
         };
     }
-    return this->is_external ? this->parser->get() : this->text.at(this->pos);
+    try {
+        return this->is_external ? this->parser->get() : this->text.at(this->pos);
+    } catch (...) {
+        throw XmlError("End of entity stream reached unexpectedly");
+    }
 }
 
 void EntityStream::operator++() {
@@ -84,11 +88,14 @@ void EntityStream::operator++() {
         }
         if (
             !this->trailing_parameter_space_done &&
-            this->is_external ? this->parser->eof() : this->pos >= this->text.size()
+            (this->is_external ? this->parser->eof() : this->pos >= this->text.size())
         ) {
             this->trailing_parameter_space_done = true;
             return;
         };
+    }
+    if (this->eof()) {
+        throw XmlError("End of entity stream reached unexpectedly");
     }
     this->pos++;
     if (is_external) {
@@ -106,8 +113,8 @@ bool EntityStream::eof() {
 void EntityStream::parse_text_declaration() {
     bool version_parsed = false;
     bool encoding_parsed = false;
+    bool just_had_whitespace = false;
     while (true) {
-        this->parser->ignore_whitespace();
         Char c = this->get();
         if (c == QUESTION_MARK) {
             operator++();
@@ -117,6 +124,15 @@ void EntityStream::parse_text_declaration() {
             operator++();
             break;
         }
+        if (is_whitespace(c)) {
+            operator++();
+            just_had_whitespace = true;
+            continue;
+        }
+        if (!just_had_whitespace) {
+            throw XmlError("Expected whitespace");
+        }
+        just_had_whitespace = false;
         DoctypeDeclaration dummy;
         std::pair attribute = this->parser->parse_attribute(dummy, false);
         if (attribute.first == XML_DECLARATION_VERSION_NAME) {
@@ -352,6 +368,9 @@ String Parser::parse_nmtoken(const String& until, const ParameterEntities& param
         if (std::find(until.cbegin(), until.cend(), c) != until.cend()) {
             break;
         }
+        if (!valid_name_character(c)) {
+            throw this->get_error_object("Invalid nmtoken character");
+        }
         nmtoken.push_back(c);
         operator++();
     }
@@ -437,6 +456,7 @@ String Parser::parse_entity_value(const DoctypeDeclaration& dtd) {
     int parameter_entity_stack_size_before = this->parameter_entity_stack.size();
     while (true) {
         Char c = this->get(dtd.parameter_entities, false, true);
+        int parameter_entity_stack_size = this->parameter_entity_stack.size();
         operator++();
         if (this->parameter_entity_eof()) {
             this->end_parameter_entity();
@@ -461,7 +481,7 @@ String Parser::parse_entity_value(const DoctypeDeclaration& dtd) {
                 value.push_back(SEMI_COLON);
             }
         } else {
-            if (c == quote && this->parameter_entity_stack.size() <= parameter_entity_stack_size_before) {
+            if (c == quote && parameter_entity_stack_size <= parameter_entity_stack_size_before) {
                 break;
             }
             value.push_back(c);
@@ -679,6 +699,7 @@ Tag Parser::parse_tag(const DoctypeDeclaration& dtd) {
     } else {
         // Start/empty tag.
         tag.name = this->parse_name(START_EMPTY_TAG_NAME_TERMINATORS);
+        bool just_had_whitespace = false;
         while (true) {
             Char c = this->get();
             if (c == TAG_CLOSE) {
@@ -699,8 +720,13 @@ Tag Parser::parse_tag(const DoctypeDeclaration& dtd) {
             }
             if (is_whitespace(c)) {
                 operator++();
+                just_had_whitespace = true;
                 continue;
             }
+            if (!just_had_whitespace) {
+                throw this->get_error_object("Expected whitespace");
+            }
+            just_had_whitespace = false;
             // Not end or whitespace, so must be an attribute.
             std::pair<String, String> attribute = this->parse_attribute(dtd, true, false, &tag.name);
             if (tag.attributes.count(attribute.first)) {
@@ -959,10 +985,12 @@ void Parser::parse_xml_declaration(Document& document) {
     bool version_info_possible = true;
     bool encoding_declaration_possible = true;
     bool standalone_declaration_possible = true;
+    bool just_had_whitespace = false;
     while (true) {
         Char c = this->get();
         if (is_whitespace(c)) {
             operator++();
+            just_had_whitespace = true;
             continue;
         }
         if (c == QUESTION_MARK) {
@@ -973,6 +1001,10 @@ void Parser::parse_xml_declaration(Document& document) {
             operator++();
             break;
         }
+        if (!just_had_whitespace) {
+            throw this->get_error_object("Expected whitespace");
+        }
+        just_had_whitespace = false;
         std::pair<String, String> attribute = this->parse_attribute(document.doctype_declaration, false);
         if (attribute.first == XML_DECLARATION_VERSION_NAME) {
             String& version = attribute.second;
@@ -1078,7 +1110,11 @@ ExternalID Parser::parse_external_id(const ParameterEntities* parameter_entities
     ExternalID external_id;
     // Looking for PUBLIC / SYSTEM - parsing like a name is just fine.
     String type_string = this->parse_name(WHITESPACE, false, parameter_entities);
-    external_id.type = get_external_id_type(type_string);
+    try {
+        external_id.type = get_external_id_type(type_string);
+    } catch (const XmlError& e) {
+        throw this->get_error_object("Expected 'SYSTEM' or 'PUBLIC'");
+    }
     if (parameter_entities) {
         this->ignore_whitespace(*parameter_entities);
     } else {
@@ -1508,7 +1544,11 @@ void Parser::parse_attribute_declaration(DoctypeDeclaration& dtd, AttributeListD
         operator++();
         ad.enumeration = this->parse_enumeration(dtd.parameter_entities);
     } else {
-        ad.type = get_attribute_type(this->parse_name(WHITESPACE, true, &dtd.parameter_entities));
+        try {
+            ad.type = get_attribute_type(this->parse_name(WHITESPACE, true, &dtd.parameter_entities));
+        } catch (const std::out_of_range&) {
+            throw this->get_error_object("Invalid attribute type");
+        }
     }
     this->ignore_whitespace(dtd.parameter_entities);
     if (ad.type == AttributeType::notation) {
@@ -1575,6 +1615,11 @@ std::set<String> Parser::parse_enumerated_attribute(
             if (!separator_next) {
                 // Cannot end on separator.
                 throw this->get_error_object("Cannot end on separator");
+            }
+            operator++();
+            // At least one whitespace after end of enumerated attribute.
+            if (!is_whitespace(this->get(parameter_entities))) {
+                throw this->get_error_object("Expected whitespace");
             }
             operator++();
             break;
@@ -1647,8 +1692,12 @@ void Parser::parse_general_entity_declaration(DoctypeDeclaration& dtd) {
         // External entity.
         ge.is_external = true;
         ge.external_id = this->parse_external_id(&dtd.parameter_entities);
+        bool at_least_one_whitespace = is_whitespace(this->get(dtd.parameter_entities));
         this->ignore_whitespace(dtd.parameter_entities);
         if (this->get(dtd.parameter_entities) != RIGHT_ANGLE_BRACKET) {
+            if (!at_least_one_whitespace) {
+                throw this->get_error_object("Expected whitespace");
+            }
             // Not done - must be NDATA indication otherwise invalid.
             if (this->parse_name(WHITESPACE, true, &dtd.parameter_entities) != String("NDATA")) {
                 throw this->get_error_object("Expected 'NDATA'");
