@@ -1,6 +1,5 @@
 #include "validate.h"
 #include <algorithm>
-#include <iostream>
 #include <sstream>
 
 
@@ -65,7 +64,7 @@ bool valid_element_content_helper(
     int max_count = ELEMENT_CONTENT_COUNT_MAXIMA.at(ecm.count);
     int count = 0;
     if (ecm.is_name) {
-        // Element name matching, in some way the base case.
+        // Element name matching, in some way can be considered the base case.
         while (
             count < max_count && pos < element.children.size() 
             && element.children.at(pos).tag.name == ecm.name
@@ -75,34 +74,27 @@ bool valid_element_content_helper(
         }
     } else {
         std::size_t previous_pos = pos;
+        // Function preparing for call for recursive element content validation.
         auto recursive_call = [&](const ElementContentModel& child_ecm) {
             return valid_element_content_helper(element, child_ecm, pos);
         };
-        if (ecm.is_sequence) {
-            // Sequence - full matches required.
-            while (
-                count < max_count && std::all_of(ecm.parts.begin(), ecm.parts.end(), recursive_call)
-            ) {
-                if (pos == previous_pos) {
-                    // No progress - infinite count (DEADLOCK).
-                    count = INT_MAX;
-                    break;
-                }
-                previous_pos = pos;
-                count++;
+        auto can_proceed = [&]{
+            if (ecm.is_sequence) {
+                // Sequence - full matches required.
+                return std::all_of(ecm.parts.begin(), ecm.parts.end(), recursive_call);
             }
-        } else {
             // Choice - any (or first) match can be accepted.
-            while (
-                count < max_count && std::any_of(ecm.parts.begin(), ecm.parts.end(), recursive_call)
-            ) {
-                if (pos == previous_pos) {
-                    count = INT_MAX;
-                    break;
-                }
-                previous_pos = pos;
-                count++;
+            return std::any_of(ecm.parts.begin(), ecm.parts.end(), recursive_call);
+        };
+        while (count < max_count && can_proceed()) {
+            if (pos == previous_pos) {
+                // DEADLOCK - cannot proceed / infinite count.
+                // Example of a potential deadlock: (Name?)* - can match 0 or more infinite times.
+                count = INT_MAX;
+                break;
             }
+            previous_pos = pos;
+            count++;
         }
     }
     return count >= min_count && count <= max_count;
@@ -110,7 +102,7 @@ bool valid_element_content_helper(
 
 void validate_element_content(const Element& element, const ElementContentModel& ecm, bool standalone) {
     if (standalone && !element.text.empty()) {
-        // Must not be standalone if white space occurs directly within any instance of those types
+        // Must not be standalone if whitespace occurs directly within any instance of those types
         throw XmlError(
             "Standalone document cannot have whitespace "
             "in element with element content: " + std::string(element.tag.name));
@@ -129,7 +121,7 @@ void validate_element_content(const Element& element, const ElementContentModel&
 }
 
 void validate_mixed_content(const Element& element, const MixedContentModel& mcm) {
-    // Simply ensure all child elements have accepted name.
+    // Simply ensure all child elements have a permitted name.
     if (!std::all_of(element.children.begin(), element.children.end(), [&](const Element& child) {
         return mcm.choices.count(child.tag.name);
     })) {
@@ -144,26 +136,20 @@ void validate_attribute_list_declarations(const DoctypeDeclaration& dtd) {
         bool notation_attribute_seen = false;
         for (const auto& [_, ad] : ald) {
             if (ad.type == AttributeType::id) {
-                // An ID attribute must have a declared default of #IMPLIED or #REQUIRED.
-                if (
-                    ad.presence != AttributePresence::required && ad.presence != AttributePresence::implied
-                ) {
+                if (ad.presence != AttributePresence::required && ad.presence != AttributePresence::implied) {
                     throw XmlError(
                         "ID attribute must be #IMPLIED or #REQUIRED: '"
                         + std::string(ad.name) + "' of element " + std::string(element_name));
                 }
-                // An element type must not have more than one ID attribute specified.
                 if (id_attribute_seen) {
                     throw XmlError("Single ID attribute only: " + std::string(element_name));
                 }
                 id_attribute_seen = true;
             } else if (ad.type == AttributeType::notation) {
-                // An element type must not have more than one NOTATION attribute specified.
                 if (notation_attribute_seen) {
                     throw XmlError("Single notation attribute only: " + std::string(element_name));
                 }
                 notation_attribute_seen = true;
-                // An attribute of type NOTATION must not be declared on an element declared EMPTY.
                 if (
                     dtd.element_declarations.count(element_name)
                     && dtd.element_declarations.at(element_name).type == ElementType::empty
@@ -172,7 +158,6 @@ void validate_attribute_list_declarations(const DoctypeDeclaration& dtd) {
                         "Notation attribute must not be declared "
                         "on an EMPTY element: " + std::string(element_name));
                 }
-                // All notation names in the declaration must be declared.
                 if (!std::all_of(ad.notations.begin(), ad.notations.end(), [&dtd](const String& notation) {
                     return dtd.notation_declarations.count(notation);
                 })) {
@@ -208,31 +193,26 @@ void validate_default_attribute_value(
             break;
         case AttributeType::idrefs:
         case AttributeType::entities:
-            // Attribute value must match Names.
             if (!valid_names(value)) {
                 throw XmlError("Attribute value must match Names");
             }
             break;
         case AttributeType::nmtoken:
-            // Attribute value must match Nmtoken.
             if (!valid_nmtoken(value)) {
                 throw XmlError("Attribute value must match Nmtoken");
             }
             break;
         case AttributeType::nmtokens:
-            // Attribute value must match Nmtokens.
             if (!valid_nmtokens(value)) {
                 throw XmlError("Attribute value must match Nmtokens");
             }
             break;
         case AttributeType::notation:
-            // Attribute value must be one of the notations in the enumeration list.
             if (!ad.notations.count(value)) {
                 throw XmlError("Attribute value must match one of the notation names");
             }
             break;
         case AttributeType::enumeration:
-            // Attribute value must be one of the enumeration values.
             if (!ad.enumeration.count(value)) {
                 throw XmlError("Attribute value must match one of the enumeration values");
             }
@@ -252,6 +232,7 @@ void validate_attributes(
     } else {
         const AttributeListDeclaration& ald = dtd.attribute_list_declarations.at(element.tag.name);
         const Attributes& attributes = element.tag.attributes;
+        // Number of registered attributes as per the attribute list declaration.
         int registered = 0;
         auto is_unparsed_entity = [&dtd](const String& value) {
             return dtd.general_entities.count(value) && dtd.general_entities.at(value).is_unparsed;
@@ -262,7 +243,7 @@ void validate_attributes(
                     // Implied allows attribute to be omitted.
                     continue;
                 }
-                // Attribute not in element and not implied => REQUIRED failed => invalid.
+                // Attribute not in element and not IMPLIED => REQUIRED failed => invalid.
                 throw XmlError(
                     "REQUIRED attribute '" + std::string(attribute_name) +
                     "' not specified in element: " + std::string(element.tag.name));
@@ -288,6 +269,7 @@ void validate_attributes(
                 }
             }
             // Further validation now that this a real attribute value.
+            // If error info not empty after, throw an error.
             std::string error_details;
             switch (ad.type) {
                 case AttributeType::idref:
@@ -354,6 +336,7 @@ void validate_attributes(
             throw XmlError("Undeclared attributes found in element: " + std::string(element.tag.name));
         }
     }
+    // Recursively validate attributes of children.
     for (const Element& child : element.children) {
         validate_attributes(child, dtd, ids);
     }
@@ -371,11 +354,12 @@ void parse_and_validate_ids(const Element& element, const DoctypeDeclaration& dt
                     }
                     ids.insert(id);
                 }
-                // Only one ID attribute max.
+                // Only one ID attribute expected per element type.
                 break;
             }
         }
     }
+    // Recursively traverse children to find more ID values.
     for (const Element& child : element.children) {
         parse_and_validate_ids(child, dtd, ids);
     }

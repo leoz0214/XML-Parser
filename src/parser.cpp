@@ -1,7 +1,6 @@
 #include "parser.h"
 #include "validate.h"
 #include <fstream>
-#include <iostream>
 
 namespace xml {
 
@@ -37,12 +36,12 @@ EntityStream::EntityStream(const std::filesystem::path& file_path, const String&
         has_text_declaration = !this->eof() && is_whitespace(this->get());
     }
     if (!has_text_declaration) {
-        // Reset stream to start.
+        // Reset stream to start if there is no text declaration.
         this->stream->seekg(0, std::ios::beg);
         this->parser->previous_char = -1;
         this->parser->just_parsed_carriage_return = false;
         this->parser->line_number = 1;
-        this->parser->line_pos = 0;
+        this->parser->line_pos = 1;
         this->leading_parameter_space_done = false;
         this->trailing_parameter_space_done = false;
         return;
@@ -76,7 +75,7 @@ Char EntityStream::get() {
     try {
         return this->is_external ? this->parser->get() : this->text.at(this->pos);
     } catch (...) {
-        throw XmlError("End of entity stream reached unexpectedly");
+        throw this->get_eof_error_object();
     }
 }
 
@@ -93,9 +92,6 @@ void EntityStream::operator++() {
             this->trailing_parameter_space_done = true;
             return;
         };
-    }
-    if (this->eof()) {
-        throw XmlError("End of entity stream reached unexpectedly");
     }
     this->pos++;
     if (is_external) {
@@ -118,7 +114,7 @@ void EntityStream::parse_text_declaration() {
         Char c = this->get();
         if (c == QUESTION_MARK) {
             operator++();
-            if (this->get() != TAG_CLOSE) {
+            if (this->get() != RIGHT_ANGLE_BRACKET) {
                 throw XmlError("Expected '>'");
             }
             operator++();
@@ -165,6 +161,17 @@ void EntityStream::parse_text_declaration() {
         // Encoding is mandatory in external text declaration.
         throw XmlError("Encoding not specified");
     }
+}
+
+XmlError EntityStream::get_eof_error_object() {
+    std::string message = "End of ";
+    message += (this->is_parameter ? "parameter entity" : "entity");
+    message += " stream reached unexpectedly";
+    if (is_external) {
+        message += ". File: ";
+        message += this->file_path.string();
+    }
+    return XmlError(message);
 }
 
 Parser::Parser(const std::string& string) {
@@ -294,7 +301,7 @@ void Parser::operator++() {
     }
     if (this->previous_char == LINE_FEED) {
         this->line_number++;
-        this->line_pos = 0;
+        this->line_pos = 1;
     } else {
         this->line_pos++;
     }
@@ -404,7 +411,7 @@ String Parser::parse_attribute_value(const DoctypeDeclaration& dtd, bool referen
                 } else {
                     value.push_back(c);
                 }             
-            }, general_entity_stack_size_before, true);
+            }, general_entity_stack_size_before);
             continue;
         }
         if (!this->just_parsed_character_reference) {
@@ -563,13 +570,13 @@ void Parser::parse_general_entity(const GeneralEntities& general_entities, bool 
 
 String Parser::parse_general_entity_text(
     const GeneralEntities& general_entities, std::function<void(Char)> func,
-    int original_depth, bool in_attribute_value
+    int original_depth
 ) {
     String text;
     while (true) {
         // Ampersand means recursive entity reference.
         // Only if not ampersand should character be added to value.
-        Char c = this->get(general_entities, in_attribute_value);
+        Char c = this->get(general_entities, true);
         if (c != AMPERSAND || this->just_parsed_character_reference) {
             func(c);
             if (!this->just_parsed_character_reference) {
@@ -690,7 +697,7 @@ Tag Parser::parse_tag(const DoctypeDeclaration& dtd) {
         while (true) {
             Char c = this->get();
             operator++();
-            if (c == TAG_CLOSE) {
+            if (c == RIGHT_ANGLE_BRACKET) {
                 break;
             } if (!is_whitespace(c)) {
                 throw this->get_error_object("Expected '>'");
@@ -702,7 +709,7 @@ Tag Parser::parse_tag(const DoctypeDeclaration& dtd) {
         bool just_had_whitespace = false;
         while (true) {
             Char c = this->get();
-            if (c == TAG_CLOSE) {
+            if (c == RIGHT_ANGLE_BRACKET) {
                 operator++();
                 tag.type = TagType::start;
                 break;
@@ -713,7 +720,7 @@ Tag Parser::parse_tag(const DoctypeDeclaration& dtd) {
                 operator++();
                 c = this->get();
                 operator++();
-                if (c != TAG_CLOSE) {
+                if (c != RIGHT_ANGLE_BRACKET) {
                     throw this->get_error_object("Expected '>'");
                 }
                 break;
@@ -1712,8 +1719,8 @@ void Parser::parse_general_entity_declaration(DoctypeDeclaration& dtd) {
         // If built-in entities are declared explictly, must match their actual value.
         String expected, expansion;
         try {
-            expected = expand_character_entities(BUILT_IN_GENERAL_ENTITIES.at(ge.name).value);
-            expansion = expand_character_entities(ge.value);
+            expected = expand_character_references(BUILT_IN_GENERAL_ENTITIES.at(ge.name).value);
+            expansion = expand_character_references(ge.value);
         } catch (const XmlError& e) {
             throw this->get_error_object(e.what());
         }
@@ -1939,7 +1946,7 @@ XmlError Parser::get_error_object(const std::string& message) {
         line_pos = this->resource_to_stream.at(resource)->parser->line_pos;
     }
     error_message += std::to_string(line_number) + ", char ";
-    error_message += std::to_string(line_pos + 1) + ": ";
+    error_message += std::to_string(line_pos) + ": ";
     error_message += message;
     return XmlError(error_message);
 }

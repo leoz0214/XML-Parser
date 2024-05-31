@@ -1,7 +1,7 @@
 // Element content validation and attributes validation etc.
 #pragma once
-#include "utils.h"
 #include <set>
+#include "utils.h"
 
 namespace xml {
 
@@ -9,12 +9,10 @@ namespace xml {
 // but the rest will be completed here).
 void validate_document(const Document&, bool, bool);
 
-// Validates an element, ensuring it meets the content requirements
-// as declared in the DTD.
+// Validates an element, ensuring it meets the content requirements as declared in the DTD.
 void validate_element(const Element&, const ElementDeclarations&, bool);
 
-// Recursive Helper for element content validation.
-// Returns true if match.
+// Recursive helper for element content validation. Returns true if match.
 bool valid_element_content_helper(const Element&, const ElementContentModel&, std::size_t&);
 // Validates element content (child elements separated by optional whitespace only).
 void validate_element_content(const Element&, const ElementContentModel&, bool);
@@ -32,8 +30,8 @@ void validate_default_attribute_value(
 // Validates the attributes of an element, and then attributes of child elements recursively.
 void validate_attributes(const Element&, const DoctypeDeclaration&, const std::set<String>&);
 
-// Parse and validate all ID values, ensuring no duplicates. Before
-// general attributes validation. Does not do any other validation.
+// Parse and validate all ID values, ensuring no duplicates, done before
+// further attributes validation. Does not perform any other validation.
 void parse_and_validate_ids(const Element&, const DoctypeDeclaration&, std::set<String>&);
 
 }

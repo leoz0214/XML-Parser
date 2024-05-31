@@ -15,6 +15,8 @@ String::String(const char* string) {
     }
 }
 
+String::String(const std::string& string) : String::String(string.c_str()) {}
+
 std::ostream& operator<<(std::ostream& output, const String& string) {
     return output << std::string(string);
 }
@@ -31,21 +33,25 @@ void fill_utf8_byte(char& byte, Char& value_left, int bits) {
 String::operator std::string() const {
     std::string string;
     string.reserve(this->size() * 4);
+    // Converts each Unicode value to sequence of correct Unicode bytes.
     for (Char c : *this) {
         if (c < 0) {
-            // Invalid character.
+            // Invalid character - cannot be negative.
             throw XmlError("Invalid character in String");
         }
         if (c <= UTF8_BYTE_LIMITS[0]) {
-            // Just ASCII.
+            // Just ASCII - nothing special - can add character directly.
             string.push_back(c);
             continue;
         } else if (c >= UTF8_BYTE_LIMITS[3]) {
-            // Too large
+            // Too large - invalid.
             throw XmlError("Invalid character in String");
         }
+        // Deduce number of bytes required based on numeric value.
         int bytes = c <= UTF8_BYTE_LIMITS[1] ? 2 : c <= UTF8_BYTE_LIMITS[2] ? 3 : 4;
+        // First character byte depends on number of bytes to represent character.
         char byte1 = bytes == 2 ? 0b11000000 : bytes == 3 ? 0b11100000 : 0b11110000;
+        // All additional bytes are in the form 10xxxxxx
         std::vector<char> extra_bytes(bytes - 1, 0b10000000);
         for (int i = bytes - 2; i >= 0; --i) {
             fill_utf8_byte(extra_bytes[i], c, 6);
@@ -105,22 +111,24 @@ bool is_whitespace(Char c) {
     return std::find(WHITESPACE.cbegin(), WHITESPACE.cend(), c) != WHITESPACE.cend();
 }
 
-bool valid_character(Char c) {
-    auto possible_range_it = CHARACTER_RANGES.lower_bound({c, c});
-    return possible_range_it != CHARACTER_RANGES.end()
+bool in_any_character_range(Char c, const CharacterRanges& character_ranges) {
+    // Identifies a possible range the character can be in,
+    // and confirms it is indeed in range. If not within any range, this will be deduced.
+    auto possible_range_it = character_ranges.lower_bound({c, c});
+    return possible_range_it != character_ranges.cend()
         && c >= possible_range_it->first && c <= possible_range_it->second;
+}
+
+bool valid_character(Char c) {
+    return in_any_character_range(c, CHARACTER_RANGES);
 }
 
 bool valid_name_start_character(Char c) {
-    auto possible_range_it = NAME_START_CHARACTER_RANGES.lower_bound({c, c});
-    return possible_range_it != NAME_START_CHARACTER_RANGES.end()
-        && c >= possible_range_it->first && c <= possible_range_it->second;
+    return in_any_character_range(c, NAME_START_CHARACTER_RANGES);
 }
 
 bool valid_name_character(Char c) {
-    auto possible_range_it = NAME_CHARACTER_RANGES.lower_bound({c, c});
-    return possible_range_it != NAME_CHARACTER_RANGES.end()
-        && c >= possible_range_it->first && c <= possible_range_it->second;
+    return in_any_character_range(c, NAME_CHARACTER_RANGES);
 }
 
 bool valid_name(const String& name, bool check_all_chars) {
@@ -153,10 +161,7 @@ bool valid_names_or_nmtokens(const String& string, bool is_nmtokens) {
     String value;
     for (Char c : string) {
         if (c == SPACE) {
-            if (
-                (!is_nmtokens && !valid_name(value, true))
-                || (is_nmtokens && !valid_nmtoken(value))
-            ) {
+            if ((!is_nmtokens && !valid_name(value, true)) || (is_nmtokens && !valid_nmtoken(value))) {
                 return false;
             }
             value.clear();
@@ -195,7 +200,7 @@ bool valid_processing_instruction_target(const String& target) {
 bool valid_version(const String& version) {
     // Must begin with 1. and subsequent characters are digits.
     return version.size() > 2 && version[0] == '1' && version[1] == '.'
-        && std::all_of(version.begin() + 2, version.end(), [](Char c) {
+        && std::all_of(version.cbegin() + 2, version.cend(), [](Char c) {
             return std::isdigit(c);
         });
 }
@@ -256,6 +261,7 @@ Char parse_character_reference(const String& string) {
             if (!std::isxdigit(c)) {
                 throw XmlError("Invalid hexadecimal (0-F) digit");
             }
+            // Converts letter to hex value if needed.
             int digit_value = c >= 'a' ? c - 'a' + 10 : c - '0';
             char_value = char_value * 16 + digit_value;
         } else {
@@ -265,7 +271,7 @@ Char parse_character_reference(const String& string) {
             char_value = char_value * 10 + (c - '0');
         }
         // Sanity range check, avoiding overflow.
-        if (char_value > 2'000'000) {
+        if (char_value > UTF8_BYTE_LIMITS[3]) {
             throw XmlError("Invalid character");
         }
     }
@@ -275,21 +281,21 @@ Char parse_character_reference(const String& string) {
     return char_value;
 }
 
-String expand_character_entities(const String& string) {
+String expand_character_references(const String& string) {
     String result;
     for (std::size_t i = 0; i < string.size(); ++i) {
         Char c = string.at(i);
         if (c == AMPERSAND && string.at(i+1) == OCTOTHORPE) {
-            String char_entity;
+            String char_ref;
             i += 2;
             while (true) {
                 c = string.at(i++);
-                char_entity.push_back(c);
+                char_ref.push_back(c);
                 if (c == SEMI_COLON) {
                     break;
                 }
             }
-            result.push_back(parse_character_reference(char_entity));
+            result.push_back(parse_character_reference(char_ref));
         } else {
             result.push_back(c);
         }
