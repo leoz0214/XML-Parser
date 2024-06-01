@@ -62,15 +62,13 @@ Char EntityStream::get() {
     // Handle special case where parameter entity replacement
     // text must be wrapped with a leading and trailing space if not in entity value.
     if (this->is_parameter && !this->in_entity_value) {
-        if (!this->leading_parameter_space_done) {
-            return SPACE;
-        }
         if (
-            !this->trailing_parameter_space_done &&
-            this->is_external ? this->parser->eof() : this->pos >= this->text.size()
+            (!this->leading_parameter_space_done)
+            || (!this->trailing_parameter_space_done &&
+                (this->is_external ? this->parser->eof() : this->pos >= this->text.size()))
         ) {
             return SPACE;
-        };
+        }
     }
     try {
         return this->is_external ? this->parser->get() : this->text.at(this->pos);
@@ -299,6 +297,8 @@ void Parser::operator++() {
         }
         return;
     }
+    // For a new line, increment the line number and reset line position to 1.
+    // Otherwise, increment the line position to indicate progress in the line.
     if (this->previous_char == LINE_FEED) {
         this->line_number++;
         this->line_pos = 1;
@@ -306,6 +306,7 @@ void Parser::operator++() {
         this->line_pos++;
     }
     if (this->previous_char == -1) {
+        // Not already incremented - increment by getting (disregarding returned value).
         this->get();
     }
     this->previous_char = -1;
@@ -1892,8 +1893,7 @@ Document Parser::parse_document(bool validate_elements, bool validate_attributes
                     this->parse_comment();
                 } else {
                     // Must be DOCTYPE declaration if not a comment - confirm.
-                    String required_string = "DOCTYPE";
-                    for (Char required : required_string) {
+                    for (Char required : String("DOCTYPE")) {
                         if (this->get() != required) {
                             throw this->get_error_object("Unexpected character");
                         }

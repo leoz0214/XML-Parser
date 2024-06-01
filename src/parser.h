@@ -203,7 +203,7 @@ class Parser {
         // Parse a give element.
         Element parse_element();
         // Start method - document parsing begins here.
-        Document parse_document(bool validate_elements = false, bool validate_attributes = false);
+        Document parse_document(bool validate_elements = true, bool validate_attributes = true);
         // String constructor.
         Parser(const std::string&);
         // Stream constructor.

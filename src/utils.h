@@ -205,7 +205,7 @@ struct Element {
     std::vector<Element> children; // Child elements in order of being parsed.
     std::vector<ProcessingInstruction> processing_instructions; // PIs in order of being parsed.
     bool is_empty = true; // Element is EMPTY
-    // Only child elements and raw whitespace (no CDATA, characteer references etc).
+    // Only child elements and raw whitespace (no CDATA, character references etc).
     bool children_only = true;
 };
 
